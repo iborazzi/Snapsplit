@@ -1,10 +1,13 @@
-import React from "react";
+import React, { useState } from "react";
 import {
+  Alert,
+  Image,
   ScrollView,
   StatusBar,
   StyleSheet,
   View,
 } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import {
   Button,
   Card,
@@ -19,7 +22,49 @@ import { useAuthorization } from "../utils/useAuthorization";
 
 export function HomeScreen() {
   const { selectedAccount } = useAuthorization();
+  const [receiptUri, setReceiptUri] = useState<string | null>(null);
+  const [receiptReady, setReceiptReady] = useState(false);
+  async function scanReceipt() {
+  try {
+    const permission = await ImagePicker.getCameraPermissionsAsync();
 
+    if (!permission.granted) {
+      const requestedPermission =
+        await ImagePicker.requestCameraPermissionsAsync();
+
+      if (!requestedPermission.granted) {
+        Alert.alert(
+          "Camera permission required",
+          "SnapSplit needs camera access to scan your receipt.",
+        );
+        return;
+      }
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["images"],
+      allowsEditing: false,
+      quality: 0.7,
+    });
+
+    if (result.canceled) {
+      Alert.alert("Camera closed", "No receipt photo was captured.");
+      return;
+    }
+
+    if (result.assets.length > 0) {
+      setReceiptUri(result.assets[0].uri);
+      Alert.alert("Success", "Receipt photo captured successfully.");
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown camera error";
+
+    Alert.alert("Camera error", message);
+  }
+}
+
+ 
   return (
     <View style={styles.screen}>
       <StatusBar barStyle="light-content" backgroundColor="#101828" />
@@ -68,11 +113,39 @@ export function HomeScreen() {
             textColor="#FFFFFF"
             contentStyle={styles.primaryButtonContent}
             style={styles.primaryButton}
-            onPress={() => {}}
+            onPress={scanReceipt}
           >
             Scan a receipt
           </Button>
+          {receiptUri && (
+            <View style={styles.previewContainer}>
+              <Image
+                source={{ uri: receiptUri }}
+                style={styles.receiptImage}
+              />
 
+              <View style={styles.previewActions}>
+                <Button
+                  mode="outlined"
+                  textColor="#D0D5DD"
+                  style={styles.previewButton}
+                  onPress={scanReceipt}
+                >
+                  Retake
+                </Button>
+
+                <Button
+                  mode="contained"
+                  buttonColor="#12B76A"
+                  textColor="#FFFFFF"
+                  style={styles.previewButton}
+                  onPress={() => setReceiptReady(true)}
+                >
+                  {receiptReady ? "Receipt selected ✓" : "Use receipt"}
+                </Button>
+              </View>
+            </View>
+          )}
           <Button
             mode="outlined"
             icon="plus"
@@ -366,6 +439,24 @@ const styles = StyleSheet.create({
     marginTop: 12,
     overflow: "hidden",
     padding: 8,
+  },  previewContainer: {
+    marginBottom: 12,
+    marginTop: 14,
+  },
+  receiptImage: {
+    borderRadius: 16,
+    height: 220,
+    resizeMode: "cover",
+    width: "100%",
+  },
+  previewActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 10,
+  },
+  previewButton: {
+    borderRadius: 12,
+    flex: 1,
   },
   footer: {
     color: "#475467",
