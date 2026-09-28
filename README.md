@@ -81,3 +81,43 @@ Hackathon prototype with a working end-to-end mobile flow:
 ## Author
 
 Built by iborazzi for the Solana Mobile ecosystem.
+
+## Verification & Build
+
+### Android release build
+
+    cd android
+    ./gradlew assembleRelease
+
+Release APK:
+
+android/app/build/outputs/apk/release/app-release.apk
+
+### Core implementation
+
+- Receipt capture and manual expense entry: src/screens/HomeScreen.tsx
+- Receipt review, participant assignment and split calculations: src/screens/ReceiptReviewScreen.tsx
+- USDC and SKR Solana payment request generation: src/screens/ReceiptReviewScreen.tsx
+
+### OCR flow
+
+SnapSplit supports receipt-image text extraction and converts detected receipt text into editable receipt items.
+
+The user can review and manually correct parsed items before splitting the bill.
+
+### Solana payment requests
+
+SnapSplit validates the recipient as a Solana public key and generates shareable Solana payment URIs.
+
+Supported request tokens:
+
+- USDC
+- SKR
+
+SKR mint:
+
+SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3
+
+The SKR integration supports selectable SKR payment requests, share request, open in wallet, and copy Solana payment URI.
+
+SnapSplit does not claim an automatic USDC-to-SKR exchange-rate conversion.
