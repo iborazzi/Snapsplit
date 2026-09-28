@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { Alert, Linking, ScrollView, Share, StatusBar, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { PublicKey } from "@solana/web3.js";
@@ -20,6 +20,7 @@ export function ReceiptReviewScreen() {
   const [mode, setMode] = useState<SplitMode>("equal");
   const [assignments, setAssignments] = useState<Record<number, string[]>>({});
   const [recipientAddress, setRecipientAddress] = useState("");
+  const [paymentToken, setPaymentToken] = useState<"USDC" | "SKR">("USDC");
   const [reviewLoaded, setReviewLoaded] = useState(false);
 
   useEffect(() => {
@@ -137,12 +138,18 @@ export function ReceiptReviewScreen() {
       return null;
     }
 
-    const usdcMint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    const tokenMint =
+      paymentToken === "SKR"
+        ? "SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3"
+        : "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
     const amount = (cents / 100).toFixed(2);
-    const message = encodeURIComponent(`SnapSplit request for ${person}`);
+    const message = encodeURIComponent(
+      `SnapSplit ${paymentToken} request for ${person}`
+    );
     const url =
       `solana:${address}?amount=${amount}` +
-      `&spl-token=${usdcMint}&label=SnapSplit&message=${message}`;
+      `&spl-token=${tokenMint}&label=SnapSplit&message=${message}`;
 
     return { url, amount };
   }
@@ -153,7 +160,7 @@ export function ReceiptReviewScreen() {
 
     try {
       await Clipboard.setStringAsync(request.url);
-      Alert.alert("Payment request copied", `${person}: ${request.amount} USDC`);
+      Alert.alert("Payment request copied", `${person}: ${request.amount} ${paymentToken}`);
     } catch {
       Alert.alert("Copy failed", "Could not copy the payment request.");
     }
@@ -165,7 +172,7 @@ export function ReceiptReviewScreen() {
 
     try {
       await Share.share({
-        message: `${person} owes ${request.amount} USDC` + "\n" + request.url,
+        message: `${person} owes ${request.amount} ${paymentToken}` + "\n" + request.url,
       });
     } catch {
       Alert.alert("Sharing failed", "Could not open the share menu.");
@@ -262,7 +269,7 @@ export function ReceiptReviewScreen() {
             {mode === "items" && items.map((item, index) => (
               <View key={index} style={styles.assignment}>
                 <Text style={styles.white}>
-                  {item.name} · {item.price.toFixed(2)}
+                  {item.name} Â· {item.price.toFixed(2)}
                 </Text>
                 <View style={styles.choices}>
                   {people.map((person) => (
@@ -297,9 +304,36 @@ export function ReceiptReviewScreen() {
             {unassignedCount === 0 && (
               <View style={{ marginTop: 24 }}>
                 <Text style={styles.cardTitle}>Request payment</Text>
-                <Text style={styles.muted}>
-                  Enter the wallet that should receive the USDC.
+
+                <Text style={[styles.muted, { marginTop: 8 }]}>
+                  Request currency
                 </Text>
+
+                <View style={styles.choices}>
+                  <Chip
+                    selected={paymentToken === "USDC"}
+                    onPress={() => setPaymentToken("USDC")}
+                  >
+                    USDC
+                  </Chip>
+                  <Chip
+                    selected={paymentToken === "SKR"}
+                    onPress={() => setPaymentToken("SKR")}
+                  >
+                    SKR
+                  </Chip>
+                </View>
+
+                <Text style={[styles.muted, { marginTop: 8 }]}>
+                  Enter the wallet that should receive the {paymentToken}.
+                </Text>
+
+                {paymentToken === "SKR" && (
+                  <Text style={[styles.notice, { marginTop: 8 }]}>
+                    SKR requests use the entered numeric amount directly; no USDC-to-SKR conversion is applied.
+                  </Text>
+                )}
+
                 <TextInput
                   label="Recipient Solana wallet address"
                   value={recipientAddress}
@@ -316,7 +350,7 @@ export function ReceiptReviewScreen() {
                       disabled={amountFor(person) <= 0}
                       onPress={() => sharePaymentRequest(person)}
                     >
-                      Share {person}'s USDC request
+                      Share {person}'s {paymentToken} request
                     </Button>
                     <Button
                       mode="outlined"
@@ -377,3 +411,6 @@ const styles = StyleSheet.create({
   },
   button: { borderRadius: 14, marginTop: 20 },
 });
+
+
+
