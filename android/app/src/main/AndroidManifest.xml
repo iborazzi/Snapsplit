@@ -24,7 +24,7 @@
         <action android:name="android.intent.action.VIEW"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
-        <data android:scheme="com.solana.mobile.expo.template"/>
+        <data android:scheme="com.iborazzi.snapsplit"/>
         <data android:scheme="exp+snapsplit"/>
       </intent-filter>
     </activity>

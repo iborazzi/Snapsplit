@@ -1,4 +1,4 @@
-package com.solana.mobile.expo.template
+package com.iborazzi.snapsplit
 
 import android.os.Build
 import android.os.Bundle

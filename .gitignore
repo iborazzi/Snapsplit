@@ -39,3 +39,9 @@ app-example
 
 # Local backups
 /backup/
+*.bak
+/snapsplit-demo.mp4
+
+# SnapSplit demo/build artifacts
+*.mp4
+*.tar.gz

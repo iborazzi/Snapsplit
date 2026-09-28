@@ -1,21 +1,14 @@
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import MaterialCommunityIcon from "@expo/vector-icons/MaterialCommunityIcons";
 import React from "react";
+
 import { TopBar } from "../components/top-bar/top-bar-feature";
 import { HomeScreen } from "../screens/HomeScreen";
-import MaterialCommunityIcon from "@expo/vector-icons/MaterialCommunityIcons";
-import { useTheme } from "react-native-paper";
-import BlankScreen from "../screens/BlankScreen";
+import { ReceiptReviewScreen } from "../screens/ReceiptReviewScreen";
 
 const Tab = createBottomTabNavigator();
 
-/**
- * This is the main navigator with a bottom tab bar.
- * Each tab is a stack navigator with its own set of screens.
- *
- * More info: https://reactnavigation.org/docs/bottom-tab-navigator/
- */
 export function HomeNavigator() {
-  const theme = useTheme();
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -30,22 +23,24 @@ export function HomeNavigator() {
                   color={color}
                 />
               );
-            case "Blank":
+
+            case "Split":
               return (
                 <MaterialCommunityIcon
-                  name={
-                    focused ? "application-edit" : "application-edit-outline"
-                  }
+                  name={focused ? "application-edit" : "application-edit-outline"}
                   size={size}
                   color={color}
                 />
               );
+
+            default:
+              return null;
           }
         },
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Blank" component={BlankScreen} />
+      <Tab.Screen name="Split" component={ReceiptReviewScreen} />
     </Tab.Navigator>
   );
 }

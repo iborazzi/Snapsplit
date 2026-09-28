@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Alert,
   Image,
@@ -8,22 +8,193 @@ import {
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import { extractTextFromImage, isSupported } from "expo-text-extractor";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Button,
   Card,
   Chip,
+  Modal,
+  Portal,
   Surface,
   Text,
+  TextInput,
 } from "react-native-paper";
-
+import { useNavigation } from "@react-navigation/native";
 import { AccountDetailFeature } from "../components/account/account-detail-feature";
 import { SignInFeature } from "../components/sign-in/sign-in-feature";
 import { useAuthorization } from "../utils/useAuthorization";
 
 export function HomeScreen() {
   const { selectedAccount } = useAuthorization();
+  const navigation = useNavigation<any>();
   const [receiptUri, setReceiptUri] = useState<string | null>(null);
+  const [ocrLines, setOcrLines] = useState<string[]>([]);
+  const [ocrDrafts, setOcrDrafts] = useState<{ name: string; price: string }[]>([]);
+  const [ocrIsUsdc, setOcrIsUsdc] = useState(false);
+  const [ocrBusy, setOcrBusy] = useState(false);
   const [receiptReady, setReceiptReady] = useState(false);
+  const [manualVisible, setManualVisible] = useState(false);
+  const [itemName, setItemName] = useState("");
+  const [itemPrice, setItemPrice] = useState("");
+  const [items, setItems] = useState<{ name: string; price: number }[]>([]);
+  const [itemsLoaded, setItemsLoaded] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem("snapsplit-items")
+      .then((saved) => {
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) setItems(parsed);
+        }
+      })
+      .catch((error) => console.warn("Could not load items", error))
+      .finally(() => setItemsLoaded(true));
+  }, []);
+
+  useEffect(() => {
+    if (itemsLoaded) {
+      AsyncStorage.setItem("snapsplit-items", JSON.stringify(items))
+        .catch((error) => console.warn("Could not save items", error));
+    }
+  }, [items, itemsLoaded]);
+
+  function addManualItem() {
+    const name = itemName.trim();
+    const price = Number(itemPrice.replace(",", "."));
+
+    if (!name || !Number.isFinite(price) || price <= 0) {
+      Alert.alert("Check item", "Enter an item name and a price above zero.");
+      return;
+    }
+
+    const updatedItems = [...items, { name, price }];
+    setItems(updatedItems);
+    setItemName("");
+    setItemPrice("");
+    setManualVisible(false);
+    navigation.navigate("Split", { items: updatedItems, receiptUri });
+  }
+  function parseReceiptLines(lines: string[]) {
+    const ignore = /^(?:SNAPSPLIT|CURRENCY|TOTAL|SUBTOTAL|TAX|VAT|KDV|DATE|TARIH)/i;
+    const names: string[] = [];
+    const prices: string[] = [];
+    const inline: { name: string; price: string }[] = [];
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line || ignore.test(line)) continue;
+
+      const combined = line.match(/^(.+?)\s+(\d+[.,]\d{2})$/);
+      if (combined && /[A-Za-z]/.test(combined[1])) {
+        inline.push({
+          name: combined[1].trim(),
+          price: combined[2].replace(",", "."),
+        });
+        continue;
+      }
+
+      if (/^\d+[.,]\d{2}$/.test(line)) {
+        prices.push(line.replace(",", "."));
+      } else if (/[A-Za-z]/.test(line) && !/^[-\s]+$/.test(line)) {
+        names.push(line);
+      }
+    }
+
+    if (inline.length > 0) return inline;
+    return names.slice(0, prices.length).map((name, index) => ({
+      name,
+      price: prices[index],
+    }));
+  }
+
+  function updateOcrDraft(
+    index: number,
+    field: "name" | "price",
+    value: string
+  ) {
+    setOcrDrafts((current) =>
+      current.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item
+      )
+    );
+  }
+
+  function useDetectedItems() {
+    if (!ocrIsUsdc) {
+      Alert.alert(
+        "Currency needs review",
+        "Automatic USDC payment requests require a receipt priced in USDC."
+      );
+      return;
+    }
+
+    const detected = ocrDrafts.map((item) => ({
+      name: item.name.trim(),
+      price: Number(item.price.replace(",", ".")),
+    }));
+
+    if (
+      detected.length === 0 ||
+      detected.some(
+        (item) =>
+          !item.name ||
+          !Number.isFinite(item.price) ||
+          item.price <= 0
+      )
+    ) {
+      Alert.alert("Check detected items", "Correct every item name and price.");
+      return;
+    }
+
+    setItems(detected);
+    setReceiptReady(true);
+    navigation.navigate("Split", { receiptUri, items: detected, resetSplit: true });
+  }
+  async function recognizeReceipt(uri: string) {
+    setReceiptUri(uri);
+    setReceiptReady(false);
+    setOcrLines([]);
+    setOcrDrafts([]);
+    setOcrIsUsdc(false);
+    setOcrBusy(true);
+
+    try {
+      if (!isSupported) {
+        Alert.alert("OCR unavailable", "Text recognition is not supported here.");
+        return;
+      }
+      const lines = await extractTextFromImage(uri);
+      setOcrLines(lines);
+      setOcrDrafts(parseReceiptLines(lines));
+      setOcrIsUsdc(/\bUSDC\b/i.test(lines.join(" ")));
+
+      if (lines.length === 0) {
+        Alert.alert("No text found", "Try a clearer photo or add items manually.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown OCR error";
+      Alert.alert("Text recognition failed", message);
+    } finally {
+      setOcrBusy(false);
+    }
+  }
+
+  async function chooseReceiptPhoto() {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: false,
+        quality: 0.9,
+      });
+      if (!result.canceled && result.assets.length > 0) {
+        await recognizeReceipt(result.assets[0].uri);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown image error";
+      Alert.alert("Could not open gallery", message);
+    }
+  }
   async function scanReceipt() {
   try {
     const permission = await ImagePicker.getCameraPermissionsAsync();
@@ -53,8 +224,7 @@ export function HomeScreen() {
     }
 
     if (result.assets.length > 0) {
-      setReceiptUri(result.assets[0].uri);
-      Alert.alert("Success", "Receipt photo captured successfully.");
+      await recognizeReceipt(result.assets[0].uri);
     }
   } catch (error) {
     const message =
@@ -103,7 +273,7 @@ export function HomeScreen() {
 
           <Text style={styles.heroDescription}>
             Take a photo, assign items to friends and settle instantly using
-            SOL or USDC.
+            USDC on Solana.
           </Text>
 
           <Button
@@ -117,6 +287,70 @@ export function HomeScreen() {
           >
             Scan a receipt
           </Button>
+          <Button
+            mode="text"
+            onPress={chooseReceiptPhoto}
+            textColor="#A78BFA"
+          >
+            Choose receipt photo from gallery
+          </Button>
+
+          {ocrBusy && (
+            <Text style={{ color: "#FFFFFF", marginTop: 12 }}>
+              Reading receipt text...
+            </Text>
+          )}
+
+          {ocrLines.length > 0 && (
+            <View style={{ marginTop: 16, padding: 14, backgroundColor: "#344054", borderRadius: 12 }}>
+              <Text style={{ color: "#FFFFFF", fontWeight: "700" }}>
+                Recognized receipt text
+              </Text>
+              {ocrLines.map((line, index) => (
+                <Text key={index} style={{ color: "#D0D5DD", marginTop: 5 }}>
+                  {line}
+                </Text>
+              ))}
+            </View>
+          )}
+
+          {ocrDrafts.length > 0 && (
+            <View style={{ marginTop: 16, padding: 14, backgroundColor: "#344054", borderRadius: 12 }}>
+              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 17 }}>
+                Check detected items
+              </Text>
+              {ocrDrafts.map((item, index) => (
+                <View key={index} style={{ marginTop: 12, gap: 8 }}>
+                  <TextInput
+                    label={`Item ${index + 1}`}
+                    value={item.name}
+                    onChangeText={(value) => updateOcrDraft(index, "name", value)}
+                    mode="outlined"
+                  />
+                  <TextInput
+                    label="Price (USDC)"
+                    value={item.price}
+                    onChangeText={(value) => updateOcrDraft(index, "price", value)}
+                    keyboardType="decimal-pad"
+                    mode="outlined"
+                  />
+                </View>
+              ))}
+              {!ocrIsUsdc && (
+                <Text style={{ color: "#FDB022", marginTop: 12 }}>
+                  Receipt currency is not USDC. Review it before creating a USDC payment request.
+                </Text>
+              )}
+              <Button
+                mode="contained"
+                disabled={!ocrIsUsdc}
+                onPress={useDetectedItems}
+                style={{ marginTop: 16 }}
+              >
+                Use checked items
+              </Button>
+            </View>
+          )}
           {receiptUri && (
             <View style={styles.previewContainer}>
               <Image
@@ -139,7 +373,16 @@ export function HomeScreen() {
                   buttonColor="#12B76A"
                   textColor="#FFFFFF"
                   style={styles.previewButton}
-                  onPress={() => setReceiptReady(true)}
+                  onPress={() => {
+                    if (ocrDrafts.length === 0 || !ocrIsUsdc) {
+                        Alert.alert(
+                          "Review receipt first",
+                          "Recognize and check the receipt items before continuing."
+                        );
+                        return;
+                      }
+                      useDetectedItems();
+                  }}
                 >
                   {receiptReady ? "Receipt selected ✓" : "Use receipt"}
                 </Button>
@@ -151,7 +394,7 @@ export function HomeScreen() {
             icon="plus"
             textColor="#D0D5DD"
             style={styles.secondaryButton}
-            onPress={() => {}}
+            onPress={() => setManualVisible(true)}
           >
             Add expense manually
           </Button>
@@ -176,7 +419,7 @@ export function HomeScreen() {
           <StepCard
             number="03"
             title="Settle"
-            description="Create an instant SOL or USDC payment request."
+            description="Create an instant USDC on Solana payment request."
           />
         </View>
 
@@ -224,6 +467,40 @@ export function HomeScreen() {
           Built for Solana Mobile · Clock In Hackathon
         </Text>
       </ScrollView>
+
+      <Portal>
+        <Modal
+          visible={manualVisible}
+          onDismiss={() => setManualVisible(false)}
+          contentContainerStyle={{
+            margin: 24,
+            padding: 20,
+            borderRadius: 18,
+            backgroundColor: "#1D2939",
+            gap: 12,
+          }}
+        >
+          <Text style={{ color: "#FFFFFF", fontSize: 20, fontWeight: "700" }}>
+            Add an expense
+          </Text>
+          <TextInput
+            label="Item name"
+            value={itemName}
+            onChangeText={setItemName}
+            mode="outlined"
+          />
+          <TextInput
+            label="Price (USDC)"
+            value={itemPrice}
+            onChangeText={setItemPrice}
+            keyboardType="decimal-pad"
+            mode="outlined"
+          />
+          <Button mode="contained" onPress={addManualItem}>
+            Add item
+          </Button>
+        </Modal>
+      </Portal>
     </View>
   );
 }
