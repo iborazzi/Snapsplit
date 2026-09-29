@@ -1,8 +1,8 @@
-﻿# SnapSplit
+# SnapSplit
 
-**SnapSplit turns a receipt into individual USDC payment requests on Solana in seconds.**
+**SnapSplit turns a receipt into individual USDC or SKR payment requests on Solana in seconds.**
 
-SnapSplit is a mobile receipt-splitting app built for Solana. Users can scan or manually enter receipt items, assign expenses to friends, split the bill equally or by item, and generate individual USDC payment requests.
+SnapSplit is a mobile receipt-splitting app built for Solana. Users can scan or manually enter receipt items, assign expenses to friends, split the bill equally or by item, and generate individual USDC or SKR payment requests.
 
 ## Problem
 
@@ -27,12 +27,12 @@ With SnapSplit, users can:
 - split the total equally
 - assign individual items to specific people
 - calculate each person's exact share
-- generate USDC payment requests on Solana
+- generate USDC or SKR payment requests on Solana
 - share or copy payment links directly from the app
 
 ## Demo Flow
 
-Receipt → Review → Add people → Split → Generate USDC request
+Receipt → Review → Add people → Split → Generate USDC or SKR request
 
 Example:
 
@@ -76,7 +76,7 @@ USDC mint:
 
 Hackathon prototype with a working end-to-end mobile flow:
 
-**Receipt → Split → USDC request**
+**Receipt → Split → USDC or SKR request**
 
 ## Author
 
