@@ -45,3 +45,5 @@ app-example
 # SnapSplit demo/build artifacts
 *.mp4
 *.tar.gz
+
+SnapSplit-release.apk

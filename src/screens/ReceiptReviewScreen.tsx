@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Alert, Linking, ScrollView, Share, StatusBar, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { PublicKey } from "@solana/web3.js";
@@ -269,7 +269,7 @@ export function ReceiptReviewScreen() {
             {mode === "items" && items.map((item, index) => (
               <View key={index} style={styles.assignment}>
                 <Text style={styles.white}>
-                  {item.name} Â· {item.price.toFixed(2)}
+                  {item.name} - {item.price.toFixed(2)}
                 </Text>
                 <View style={styles.choices}>
                   {people.map((person) => (
@@ -291,7 +291,7 @@ export function ReceiptReviewScreen() {
               </Text>
             )}
 
-            <Text style={[styles.cardTitle, { marginTop: 20 }]}>Each person owes</Text>
+            <Text style={[styles.cardTitle, { marginTop: 20 }]}>Bill shares (USDC reference)</Text>
             {people.map((person) => (
               <View key={person} style={styles.row}>
                 <Text style={styles.white}>{person}</Text>
