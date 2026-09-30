@@ -1,7 +1,7 @@
 // Polyfills
 import "./src/polyfills";
 
-import { StyleSheet, useColorScheme } from "react-native";
+import { StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ConnectionProvider } from "./src/utils/ConnectionProvider";
@@ -12,7 +12,6 @@ import {
 } from "@react-navigation/native";
 import {
   PaperProvider,
-  MD3DarkTheme,
   MD3LightTheme,
   adaptNavigationTheme,
 } from "react-native-paper";
@@ -22,8 +21,7 @@ import { ClusterProvider } from "./src/components/cluster/cluster-data-access";
 const queryClient = new QueryClient();
 
 export default function App() {
-  const colorScheme = useColorScheme();
-  const { LightTheme, DarkTheme } = adaptNavigationTheme({
+  const { LightTheme } = adaptNavigationTheme({
     reactNavigationLight: NavigationDefaultTheme,
     reactNavigationDark: NavigationDarkTheme,
   });
@@ -34,14 +32,7 @@ export default function App() {
     colors: {
       ...MD3LightTheme.colors,
       ...LightTheme.colors,
-    },
-  };
-  const CombinedDarkTheme = {
-    ...MD3DarkTheme,
-    ...DarkTheme,
-    colors: {
-      ...MD3DarkTheme.colors,
-      ...DarkTheme.colors,
+      primary: "#B94A13", background: "#FFF8F0", surface: "#FFFFFF",
     },
   };
   return (
@@ -52,19 +43,12 @@ export default function App() {
             style={[
               styles.shell,
               {
-                backgroundColor:
-                  colorScheme === "dark"
-                    ? MD3DarkTheme.colors.background
-                    : MD3LightTheme.colors.background,
+                backgroundColor: "#FFF8F0",
               },
             ]}
           >
             <PaperProvider
-              theme={
-                colorScheme === "dark"
-                  ? CombinedDarkTheme
-                  : CombinedDefaultTheme
-              }
+              theme={CombinedDefaultTheme}
             >
               <AppNavigator />
             </PaperProvider>

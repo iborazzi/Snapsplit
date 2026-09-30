@@ -47,3 +47,5 @@ app-example
 *.tar.gz
 
 SnapSplit-release.apk
+
+.test-build/

@@ -1,3 +1,5 @@
+import { CafeMenu } from "../components/cafe/CafeMenu";
+import { positiveDecimal } from "../domain/settlement";
 import React, { useEffect, useState } from "react";
 import {
   Alert,
@@ -26,6 +28,7 @@ import { SignInFeature } from "../components/sign-in/sign-in-feature";
 import { useAuthorization } from "../utils/useAuthorization";
 
 export function HomeScreen() {
+  const [cafeVisible, setCafeVisible] = useState(false);
   const { selectedAccount } = useAuthorization();
   const navigation = useNavigation<any>();
   const [receiptUri, setReceiptUri] = useState<string | null>(null);
@@ -61,13 +64,15 @@ export function HomeScreen() {
 
   function addManualItem() {
     const name = itemName.trim();
-    const price = Number(itemPrice.replace(",", "."));
+    let price: number;
+    try { price = positiveDecimal(itemPrice); } catch { Alert.alert("Check price", "Enter a positive decimal USDC price."); return; }
 
     if (!name || !Number.isFinite(price) || price <= 0) {
       Alert.alert("Check item", "Enter an item name and a price above zero.");
       return;
     }
 
+    if (Math.abs(price * 100 - Math.round(price * 100)) > 0.00001) { Alert.alert("Check price", "Use at most two decimal places."); return; }
     const updatedItems = [...items, { name, price }];
     setItems(updatedItems);
     setItemName("");
@@ -120,7 +125,7 @@ export function HomeScreen() {
     );
   }
 
-  function useDetectedItems() {
+  function applyDetectedItems() {
     if (!ocrIsUsdc) {
       Alert.alert(
         "Currency needs review",
@@ -237,7 +242,8 @@ export function HomeScreen() {
  
   return (
     <View style={styles.screen}>
-      <StatusBar barStyle="light-content" backgroundColor="#101828" />
+      <CafeMenu visible={cafeVisible} onClose={() => setCafeVisible(false)} onAdd={() => setManualVisible(true)} />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFF8F0" />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -269,45 +275,47 @@ export function HomeScreen() {
             <Text style={styles.heroEmoji}>🧾</Text>
           </View>
 
-          <Text style={styles.heroTitle}>Split any receipt in seconds</Text>
+          <Text style={styles.heroTitle}>Good company. Easy splits.</Text>
 
           <Text style={styles.heroDescription}>
-            Take a photo, assign items to friends and settle instantly using
-            USDC on Solana.
+            Scan a receipt or open the cafe menu. Share items with friends and create a Solana payment request.
           </Text>
 
+          <Button mode="contained" icon="qrcode-scan" buttonColor="#EA6A20" textColor="#FFFFFF" contentStyle={styles.primaryButtonContent} style={styles.primaryButton} onPress={() => setCafeVisible(true)}>Scan cafe menu QR</Button>
           <Button
             mode="contained"
             icon="camera"
-            buttonColor="#7C5CFC"
+            buttonColor="#EA6A20"
             textColor="#FFFFFF"
             contentStyle={styles.primaryButtonContent}
             style={styles.primaryButton}
+            disabled={ocrBusy}
             onPress={scanReceipt}
           >
             Scan a receipt
           </Button>
           <Button
             mode="text"
+            disabled={ocrBusy}
             onPress={chooseReceiptPhoto}
-            textColor="#A78BFA"
+            textColor="#B94A13"
           >
             Choose receipt photo from gallery
           </Button>
 
           {ocrBusy && (
-            <Text style={{ color: "#FFFFFF", marginTop: 12 }}>
+            <Text style={{ color: "#231C16", marginTop: 12 }}>
               Reading receipt text...
             </Text>
           )}
 
           {ocrLines.length > 0 && (
-            <View style={{ marginTop: 16, padding: 14, backgroundColor: "#344054", borderRadius: 12 }}>
-              <Text style={{ color: "#FFFFFF", fontWeight: "700" }}>
+            <View style={{ marginTop: 16, padding: 14, backgroundColor: "#F1E4D5", borderRadius: 12 }}>
+              <Text style={{ color: "#231C16", fontWeight: "700" }}>
                 Recognized receipt text
               </Text>
               {ocrLines.map((line, index) => (
-                <Text key={index} style={{ color: "#D0D5DD", marginTop: 5 }}>
+                <Text key={index} style={{ color: "#4B4036", marginTop: 5 }}>
                   {line}
                 </Text>
               ))}
@@ -315,8 +323,8 @@ export function HomeScreen() {
           )}
 
           {ocrDrafts.length > 0 && (
-            <View style={{ marginTop: 16, padding: 14, backgroundColor: "#344054", borderRadius: 12 }}>
-              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 17 }}>
+            <View style={{ marginTop: 16, padding: 14, backgroundColor: "#F1E4D5", borderRadius: 12 }}>
+              <Text style={{ color: "#231C16", fontWeight: "700", fontSize: 17 }}>
                 Check detected items
               </Text>
               {ocrDrafts.map((item, index) => (
@@ -337,14 +345,14 @@ export function HomeScreen() {
                 </View>
               ))}
               {!ocrIsUsdc && (
-                <Text style={{ color: "#FDB022", marginTop: 12 }}>
+                <Text style={{ color: "#A33F0E", marginTop: 12 }}>
                   Receipt currency is not USDC. Review it before creating a USDC payment request.
                 </Text>
               )}
               <Button
                 mode="contained"
                 disabled={!ocrIsUsdc}
-                onPress={useDetectedItems}
+                onPress={applyDetectedItems}
                 style={{ marginTop: 16 }}
               >
                 Use checked items
@@ -361,7 +369,7 @@ export function HomeScreen() {
               <View style={styles.previewActions}>
                 <Button
                   mode="outlined"
-                  textColor="#D0D5DD"
+                  textColor="#4B4036"
                   style={styles.previewButton}
                   onPress={scanReceipt}
                 >
@@ -381,7 +389,7 @@ export function HomeScreen() {
                         );
                         return;
                       }
-                      useDetectedItems();
+                      applyDetectedItems();
                   }}
                 >
                   {receiptReady ? "Receipt selected ✓" : "Use receipt"}
@@ -392,7 +400,7 @@ export function HomeScreen() {
           <Button
             mode="outlined"
             icon="plus"
-            textColor="#D0D5DD"
+            textColor="#4B4036"
             style={styles.secondaryButton}
             onPress={() => setManualVisible(true)}
           >
@@ -423,26 +431,11 @@ export function HomeScreen() {
           />
         </View>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent split</Text>
-          <Text style={styles.linkText}>View all</Text>
-        </View>
-
         <Card mode="contained" style={styles.recentCard}>
-          <Card.Content style={styles.recentContent}>
-            <View style={styles.receiptBadge}>
-              <Text style={styles.receiptEmoji}>🍕</Text>
-            </View>
-
-            <View style={styles.recentInfo}>
-              <Text style={styles.recentTitle}>Friday Dinner</Text>
-              <Text style={styles.recentMeta}>4 people · Demo split</Text>
-            </View>
-
-            <View style={styles.amountArea}>
-              <Text style={styles.amount}>48 USDC</Text>
-              <Text style={styles.pending}>Pending</Text>
-            </View>
+          <Card.Content>
+            <Text style={styles.recentTitle}>{items.length ? 'Your current bill' : 'Start your first split'}</Text>
+            <Text style={styles.recentMeta}>{items.length} items · {items.reduce((sum, item) => sum + item.price, 0).toFixed(2)} USDC</Text>
+            <Button disabled={!items.length} onPress={() => navigation.navigate("Split", { items, receiptUri })}>Continue splitting</Button>
           </Card.Content>
         </Card>
 
@@ -476,11 +469,11 @@ export function HomeScreen() {
             margin: 24,
             padding: 20,
             borderRadius: 18,
-            backgroundColor: "#1D2939",
+            backgroundColor: "#FFFFFF",
             gap: 12,
           }}
         >
-          <Text style={{ color: "#FFFFFF", fontSize: 20, fontWeight: "700" }}>
+          <Text style={{ color: "#231C16", fontSize: 20, fontWeight: "700" }}>
             Add an expense
           </Text>
           <TextInput
@@ -524,7 +517,7 @@ function StepCard({ number, title, description }: StepCardProps) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#101828",
+    backgroundColor: "#FFF8F0",
   },
   content: {
     padding: 20,
@@ -535,38 +528,38 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   brand: {
-    color: "#FFFFFF",
+    color: "#231C16",
     fontSize: 34,
     fontWeight: "900",
     letterSpacing: -1,
   },
   tagline: {
-    color: "#98A2B3",
+    color: "#65594E",
     fontSize: 14,
     lineHeight: 20,
     marginTop: 4,
   },
   walletChip: {
     alignSelf: "flex-start",
-    backgroundColor: "#344054",
+    backgroundColor: "#F1E4D5",
   },
   connectedChip: {
     backgroundColor: "#14532D",
   },
   walletChipText: {
-    color: "#FFFFFF",
+    color: "#231C16",
     fontWeight: "700",
   },
   heroCard: {
-    backgroundColor: "#1D2939",
-    borderColor: "#344054",
+    backgroundColor: "#FFFFFF",
+    borderColor: "#F1E4D5",
     borderRadius: 24,
     borderWidth: 1,
     padding: 20,
   },
   heroIcon: {
     alignItems: "center",
-    backgroundColor: "#2D234F",
+    backgroundColor: "#FFE2C5",
     borderRadius: 18,
     height: 64,
     justifyContent: "center",
@@ -577,13 +570,13 @@ const styles = StyleSheet.create({
     fontSize: 32,
   },
   heroTitle: {
-    color: "#FFFFFF",
+    color: "#231C16",
     fontSize: 25,
     fontWeight: "800",
     letterSpacing: -0.5,
   },
   heroDescription: {
-    color: "#98A2B3",
+    color: "#65594E",
     fontSize: 15,
     lineHeight: 22,
     marginBottom: 22,
@@ -597,7 +590,7 @@ const styles = StyleSheet.create({
     height: 52,
   },
   secondaryButton: {
-    borderColor: "#475467",
+    borderColor: "#867565",
     borderRadius: 14,
   },
   sectionHeader: {
@@ -608,48 +601,48 @@ const styles = StyleSheet.create({
     marginTop: 28,
   },
   sectionTitle: {
-    color: "#FFFFFF",
+    color: "#231C16",
     fontSize: 18,
     fontWeight: "800",
   },
   stepCounter: {
-    color: "#667085",
+    color: "#75685C",
     fontSize: 12,
   },
   steps: {
     gap: 10,
   },
   stepCard: {
-    backgroundColor: "#1D2939",
+    backgroundColor: "#FFFFFF",
     borderRadius: 16,
     flexDirection: "row",
     gap: 12,
     padding: 16,
   },
   stepNumber: {
-    color: "#A48AFB",
+    color: "#B94A13",
     fontSize: 13,
     fontWeight: "900",
   },
   stepTitle: {
-    color: "#FFFFFF",
+    color: "#231C16",
     fontSize: 15,
     fontWeight: "800",
     width: 48,
   },
   stepDescription: {
-    color: "#98A2B3",
+    color: "#65594E",
     flex: 1,
     fontSize: 13,
     lineHeight: 18,
   },
   linkText: {
-    color: "#A48AFB",
+    color: "#B94A13",
     fontSize: 13,
     fontWeight: "700",
   },
   recentCard: {
-    backgroundColor: "#1D2939",
+    backgroundColor: "#FFFFFF",
     borderRadius: 18,
   },
   recentContent: {
@@ -659,7 +652,7 @@ const styles = StyleSheet.create({
   },
   receiptBadge: {
     alignItems: "center",
-    backgroundColor: "#344054",
+    backgroundColor: "#F1E4D5",
     borderRadius: 14,
     height: 48,
     justifyContent: "center",
@@ -673,12 +666,12 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   recentTitle: {
-    color: "#FFFFFF",
+    color: "#231C16",
     fontSize: 15,
     fontWeight: "800",
   },
   recentMeta: {
-    color: "#667085",
+    color: "#75685C",
     fontSize: 12,
     marginTop: 3,
   },
@@ -686,12 +679,12 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
   },
   amount: {
-    color: "#FFFFFF",
+    color: "#231C16",
     fontSize: 14,
     fontWeight: "800",
   },
   pending: {
-    color: "#FDB022",
+    color: "#A33F0E",
     fontSize: 11,
     marginTop: 3,
   },
@@ -699,19 +692,19 @@ const styles = StyleSheet.create({
     marginTop: 28,
   },
   signInContainer: {
-    backgroundColor: "#1D2939",
+    backgroundColor: "#FFFFFF",
     borderRadius: 18,
     marginTop: 12,
     padding: 16,
   },
   walletDescription: {
-    color: "#98A2B3",
+    color: "#65594E",
     fontSize: 13,
     lineHeight: 19,
     marginBottom: 12,
   },
   accountContainer: {
-    backgroundColor: "#1D2939",
+    backgroundColor: "#FFFFFF",
     borderRadius: 18,
     marginTop: 12,
     overflow: "hidden",
@@ -736,7 +729,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   footer: {
-    color: "#475467",
+    color: "#867565",
     fontSize: 11,
     marginTop: 32,
     textAlign: "center",

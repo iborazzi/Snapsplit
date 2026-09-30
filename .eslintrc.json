@@ -1,0 +1,1 @@
+{"extends":"expo","ignorePatterns":[".test-build/","handoff/","android/","node_modules/"]}

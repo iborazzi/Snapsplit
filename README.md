@@ -121,3 +121,60 @@ SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3
 The SKR integration supports selectable SKR payment requests, share request, open in wallet, and copy Solana payment URI.
 
 SnapSplit does not claim an automatic USDC-to-SKR exchange-rate conversion.
+
+## Prepared cafe QR and settlement update
+
+This source revision adds a cafe menu QR modal in `src/components/cafe/CafeMenu.tsx`.
+Only HTTPS links without embedded credentials are accepted; users see the domain before opening the external menu.
+Menu prices are not scraped and orders are not submitted to merchants. Items are entered manually in USDC reference units.
+
+OCR runs through `expo-text-extractor` in `src/screens/HomeScreen.tsx`; detected lines become editable drafts and must be reviewed before splitting.
+Split allocation is in `src/screens/ReceiptReviewScreen.tsx`. SKR settlement uses an explicitly entered manual SKR-per-USDC rate, with rounding conserved across the group in `src/domain/settlement.ts`.
+Requests include the SPL token mint and an amount in token UI units, not atomic units.
+Copy/share/open creates a transfer request; it does not prove an on-chain payment or implement MWA transfer signing.
+
+### Checks
+
+```
+npm ci
+npm test
+npm run typecheck
+npm run lint
+```
+
+`expo-camera` is a native dependency, so rebuild the Android APK before demonstrating QR scanning. Real camera/OCR and wallet interoperability require device testing. See `handoff/AKSAM-PLANI.md` for the release evidence workflow.
+
+## Verified Android demo
+
+SnapSplit is an Android receipt-splitting app built with Expo and React Native.
+
+- Scan or select a receipt, review detected items, and edit amounts.
+- Split the bill equally or assign individual items to people.
+- Connect a compatible Android wallet through Mobile Wallet Adapter.
+- Generate and share Solana Pay transfer requests for USDC or SKR.
+- SKR amounts use a manually agreed rate, not a live market quote.
+- Devnet demo mode supports Circle test USDC only.
+
+### Recorded demo
+
+The demo shows a 6.00 USDC receipt, Tom and Jerry, item-based shares
+of 3.50 and 2.50 USDC, and SKR request controls with an example agreed rate.
+
+A 3.50 test USDC request for Tom is opened from SnapSplit in Phantom.
+The recording shows wallet approval, a "Sent" notification, and the
+sender's test USDC balance decreasing from 11.50 to 8.00.
+
+Devnet tokens have no monetary value. The SKR section demonstrates
+request configuration; it does not demonstrate an SKR transfer.
+
+### Current limitations
+
+Payments are approved and sent in the external wallet.
+SnapSplit does not yet verify payment completion on-chain.
+The recorded receipt is denominated in USDC; automatic fiat conversion
+is not implemented.
+
+### Validation
+
+Run `npm test`, `npm run typecheck`, and `npm run lint`.
+The current lint baseline contains 20 warnings and no errors.

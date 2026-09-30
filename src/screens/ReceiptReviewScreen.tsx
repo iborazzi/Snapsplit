@@ -1,3 +1,4 @@
+import { requestUri, settlementAmounts } from "../domain/settlement";
 import React, { useEffect, useState } from "react";
 import { Alert, Linking, ScrollView, Share, StatusBar, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
@@ -21,6 +22,9 @@ export function ReceiptReviewScreen() {
   const [assignments, setAssignments] = useState<Record<number, string[]>>({});
   const [recipientAddress, setRecipientAddress] = useState("");
   const [paymentToken, setPaymentToken] = useState<"USDC" | "SKR">("USDC");
+  const [paymentNetwork, setPaymentNetwork] = useState<"mainnet" | "devnet">("mainnet");
+  const [skrRate, setSkrRate] = useState("");
+  const [preview, setPreview] = useState<string | null>(null);
   const [reviewLoaded, setReviewLoaded] = useState(false);
 
   useEffect(() => {
@@ -66,6 +70,8 @@ export function ReceiptReviewScreen() {
     setAssignments({});
     navigation.setParams({ resetSplit: false });
   }, [reviewLoaded, route.params?.resetSplit, navigation]);
+
+  useEffect(() => { setPreview(null); }, [items, people, mode, assignments, recipientAddress, paymentToken, skrRate, paymentNetwork]);
 
   const totalCents = items.reduce(
     (sum, item) => sum + Math.round(item.price * 100),
@@ -138,20 +144,15 @@ export function ReceiptReviewScreen() {
       return null;
     }
 
-    const tokenMint =
-      paymentToken === "SKR"
-        ? "SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3"
-        : "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    if (unassignedCount > 0) { Alert.alert("Assign all items", "Complete the split before requesting payment."); return null; }
+    let amount: string;
+    try {
+      amount = settlementAmounts(people.map(amountFor), paymentToken, skrRate)[people.indexOf(person)];
+      const url = requestUri(address, paymentToken, amount, person, paymentNetwork);
+      return { url, amount };
+    } catch (error) { Alert.alert("Check settlement rate", error instanceof Error ? error.message : "Invalid settlement."); return null; }
 
-    const amount = (cents / 100).toFixed(2);
-    const message = encodeURIComponent(
-      `SnapSplit ${paymentToken} request for ${person}`
-    );
-    const url =
-      `solana:${address}?amount=${amount}` +
-      `&spl-token=${tokenMint}&label=SnapSplit&message=${message}`;
 
-    return { url, amount };
   }
 
   async function copyPaymentRequest(person: string) {
@@ -198,7 +199,7 @@ export function ReceiptReviewScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar barStyle="light-content" backgroundColor="#101828" />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFF8F0" />
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.eyebrow}>STEP 2 OF 3</Text>
         <Text style={styles.title}>Review receipt</Text>
@@ -225,7 +226,7 @@ export function ReceiptReviewScreen() {
 
         <Button
           mode="contained"
-          buttonColor="#7C5CFC"
+          buttonColor="#EA6A20"
           style={styles.button}
           onPress={() => navigation.navigate("Home")}
         >
@@ -304,6 +305,15 @@ export function ReceiptReviewScreen() {
             {unassignedCount === 0 && (
               <View style={{ marginTop: 24 }}>
                 <Text style={styles.cardTitle}>Request payment</Text>
+                <View style={styles.choices}>
+                  <Chip selected={paymentNetwork === "mainnet"} onPress={() => setPaymentNetwork("mainnet")}>Mainnet</Chip>
+                  <Chip selected={paymentNetwork === "devnet"} onPress={() => { setPaymentNetwork("devnet"); setPaymentToken("USDC"); }}>Devnet demo</Chip>
+                </View>
+                <Text style={styles.notice}>
+                  {paymentNetwork === "devnet"
+                    ? "DEVNET TEST PAYMENT: test USDC has no monetary value. Set your payer wallet to Solana Devnet before opening."
+                    : "MAINNET PAYMENT: real USDC or SKR. Set your payer wallet to Solana Mainnet before opening."}
+                </Text>
 
                 <Text style={[styles.muted, { marginTop: 8 }]}>
                   Request currency
@@ -317,6 +327,7 @@ export function ReceiptReviewScreen() {
                     USDC
                   </Chip>
                   <Chip
+                    disabled={paymentNetwork === "devnet"}
                     selected={paymentToken === "SKR"}
                     onPress={() => setPaymentToken("SKR")}
                   >
@@ -330,10 +341,11 @@ export function ReceiptReviewScreen() {
 
                 {paymentToken === "SKR" && (
                   <Text style={[styles.notice, { marginTop: 8 }]}>
-                    SKR requests use the entered numeric amount directly; no USDC-to-SKR conversion is applied.
+                    Enter the agreed SKR per 1 USDC rate. This is a manual rate, not a live market quote.
                   </Text>
                 )}
 
+                {paymentToken === "SKR" && <TextInput mode="outlined" label="SKR per 1 USDC (agreed rate)" value={skrRate} onChangeText={setSkrRate} keyboardType="decimal-pad" style={{ marginTop: 12 }} />}
                 <TextInput
                   label="Recipient Solana wallet address"
                   value={recipientAddress}
@@ -345,6 +357,7 @@ export function ReceiptReviewScreen() {
                 />
                 {people.map((person) => (
                   <View key={person} style={{ marginTop: 12 }}>
+                    <Button mode="text" onPress={() => { const r = paymentRequestFor(person); if (r) setPreview(`${person}: ${r.amount} ${paymentToken}\n${r.url}`); }}>Preview amount and link</Button>
                     <Button
                       mode="contained"
                       disabled={amountFor(person) <= 0}
@@ -370,6 +383,7 @@ export function ReceiptReviewScreen() {
                     </Button>
                   </View>
                 ))}
+                {preview && <Text selectable style={styles.muted}>{preview}</Text>}
                 <Text style={styles.muted}>
                   Copying a request does not confirm or send a payment.
                 </Text>
@@ -383,30 +397,30 @@ export function ReceiptReviewScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#101828" },
+  screen: { flex: 1, backgroundColor: "#FFF8F0" },
   content: { padding: 20, paddingBottom: 48 },
   eyebrow: {
-    color: "#A78BFA", fontSize: 12, fontWeight: "700",
+    color: "#B94A13", fontSize: 12, fontWeight: "700",
     letterSpacing: 1, marginTop: 16,
   },
-  title: { color: "#FFFFFF", fontSize: 30, fontWeight: "800", marginTop: 8 },
-  description: { color: "#98A2B3", fontSize: 14, lineHeight: 21, marginTop: 8 },
+  title: { color: "#231C16", fontSize: 30, fontWeight: "800", marginTop: 8 },
+  description: { color: "#65594E", fontSize: 14, lineHeight: 21, marginTop: 8 },
   card: {
-    backgroundColor: "#1D2939", borderColor: "#344054",
+    backgroundColor: "#FFFFFF", borderColor: "#EADCCC",
     borderRadius: 20, borderWidth: 1, marginTop: 24, padding: 18,
   },
-  cardTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "700" },
-  muted: { color: "#98A2B3", fontSize: 14, marginTop: 12 },
-  white: { color: "#FFFFFF", fontSize: 14 },
-  total: { color: "#A78BFA", fontWeight: "700", marginTop: 18 },
-  notice: { color: "#FDB022", marginTop: 14 },
+  cardTitle: { color: "#231C16", fontSize: 18, fontWeight: "700" },
+  muted: { color: "#65594E", fontSize: 14, marginTop: 12 },
+  white: { color: "#231C16", fontSize: 14 },
+  total: { color: "#B94A13", fontWeight: "700", marginTop: 18 },
+  notice: { color: "#A33F0E", marginTop: 14 },
   row: {
     flexDirection: "row", justifyContent: "space-between",
     alignItems: "center", marginTop: 14,
   },
   choices: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   assignment: {
-    borderTopWidth: 1, borderTopColor: "#344054",
+    borderTopWidth: 1, borderTopColor: "#EADCCC",
     marginTop: 16, paddingTop: 14,
   },
   button: { borderRadius: 14, marginTop: 20 },
