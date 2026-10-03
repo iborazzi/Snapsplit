@@ -1,8 +1,6 @@
-import { useAuthorization } from "../utils/useAuthorization";
 import { StyleSheet, View } from "react-native";
 
 export default function AccountScreen() {
-  const { selectedAccount } = useAuthorization();
 
   return (
     <>

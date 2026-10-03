@@ -1,12 +1,9 @@
-import { transact } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import { useState, useCallback } from "react";
 import { Button } from "react-native-paper";
 import { alertAndLog } from "../../utils/alertAndLog";
-import { useAuthorization } from "../../utils/useAuthorization";
 import { useMobileWallet } from "../../utils/useMobileWallet";
 
 export function ConnectButton() {
-  const { authorizeSession } = useAuthorization();
   const { connect } = useMobileWallet();
   const [authorizationInProgress, setAuthorizationInProgress] = useState(false);
   const handleConnectPress = useCallback(async () => {
@@ -24,7 +21,7 @@ export function ConnectButton() {
     } finally {
       setAuthorizationInProgress(false);
     }
-  }, [authorizationInProgress, authorizeSession]);
+  }, [authorizationInProgress, connect]);
   return (
     <Button
       mode="contained"
@@ -38,7 +35,6 @@ export function ConnectButton() {
 }
 
 export function SignInButton() {
-  const { authorizeSession } = useAuthorization();
   const { signIn } = useMobileWallet();
   const [signInInProgress, setSignInInProgress] = useState(false);
   const handleConnectPress = useCallback(async () => {
@@ -48,9 +44,9 @@ export function SignInButton() {
       }
       setSignInInProgress(true);
       await signIn({
-        domain: "yourdomain.com",
-        statement: "Sign into Expo Template App",
-        uri: "https://yourdomain.com",
+        domain: "github.com",
+        statement: "Sign in to SnapSplit",
+        uri: "https://github.com/iborazzi/Snapsplit",
       });
     } catch (err: any) {
       alertAndLog(
@@ -60,7 +56,7 @@ export function SignInButton() {
     } finally {
       setSignInInProgress(false);
     }
-  }, [signInInProgress, authorizeSession]);
+  }, [signInInProgress, signIn]);
   return (
     <Button
       mode="outlined"

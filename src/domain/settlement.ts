@@ -32,12 +32,12 @@ export function settlementAmounts(cents: number[], token: Token, rateText: strin
   for (let i = 0; i < remainder; i++) units[order[i].i]++;
   return units.map(n => (n / 10000).toFixed(4));
 }
-export function requestUri(address: string, token: Token, amount: string, person: string, network: PaymentNetwork = 'mainnet'): string {
+export function requestUri(address: string, token: Token, amount: string, person: string, network: PaymentNetwork = 'mainnet', reference?: string): string {
   positiveDecimal(amount);
   if (network === 'devnet' && token !== 'USDC') throw new Error('Devnet demo supports test USDC only.');
   const mint = network === 'devnet' ? DEVNET_USDC : MINTS[token];
   const label = network === 'devnet' ? 'SnapSplit Devnet Demo' : 'SnapSplit';
-  return `solana:${address}?amount=${amount}&spl-token=${mint}&label=${encodeURIComponent(label)}&message=${encodeURIComponent(`SnapSplit ${token} request for ${person}`)}`;
+  return `solana:${address}?amount=${amount}&spl-token=${mint}&label=${encodeURIComponent(label)}&message=${encodeURIComponent(`SnapSplit ${token} request for ${person}`)}${reference ? `&reference=${encodeURIComponent(reference)}` : ""}`;
 }
 export function menuUrl(input: string): string {
   const url = new URL(input.trim());

@@ -24,7 +24,7 @@ export function useMobileWallet() {
         return await authorizeSessionWithSignIn(wallet, signInPayload);
       });
     },
-    [authorizeSession]
+    [authorizeSessionWithSignIn]
   );
 
   const disconnect = useCallback(async (): Promise<void> => {
@@ -72,6 +72,6 @@ export function useMobileWallet() {
       signAndSendTransaction,
       signMessage,
     }),
-    [signAndSendTransaction, signMessage]
+    [connect, signIn, disconnect, signAndSendTransaction, signMessage]
   );
 }

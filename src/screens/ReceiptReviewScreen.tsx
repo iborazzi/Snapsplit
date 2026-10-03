@@ -1,7 +1,9 @@
 import { requestUri, settlementAmounts } from "../domain/settlement";
-import React, { useEffect, useState } from "react";
+import { findPayment, verifyPaymentSignature } from "../domain/payment-verification";
+import React, { useEffect, useRef, useState } from "react";
 import { Alert, Linking, ScrollView, Share, StatusBar, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
+import * as Crypto from "expo-crypto";
 import { PublicKey } from "@solana/web3.js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Button, Chip, Surface, Text, TextInput } from "react-native-paper";
@@ -9,6 +11,7 @@ import { useNavigation, useRoute } from "@react-navigation/native";
 
 type ReceiptItem = { name: string; price: number };
 type SplitMode = "equal" | "items";
+type PaymentResult = { context: string; message: string; signature?: string };
 
 export function ReceiptReviewScreen() {
   const navigation = useNavigation<any>();
@@ -26,6 +29,12 @@ export function ReceiptReviewScreen() {
   const [skrRate, setSkrRate] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const [reviewLoaded, setReviewLoaded] = useState(false);
+  const [paymentResults, setPaymentResults] = useState<Record<string, PaymentResult>>({});
+  const [checkingPerson, setCheckingPerson] = useState<string | null>(null);
+  const [signatureInputs, setSignatureInputs] = useState<Record<string, string>>({});
+  const checkInProgress = useRef(false);
+  const referenceTasks = useRef(new Map<string, Promise<string>>());
+  const [requestSession, setRequestSession] = useState(() => new PublicKey(Crypto.getRandomBytes(32)).toBase58());
 
   useEffect(() => {
     Promise.all([
@@ -39,6 +48,15 @@ export function ReceiptReviewScreen() {
         }
         if (savedReviewData) {
           const saved = JSON.parse(savedReviewData);
+          if (saved.paymentNetwork === "mainnet" || saved.paymentNetwork === "devnet") {
+            setPaymentNetwork(saved.paymentNetwork);
+          }
+          if (saved.paymentToken === "USDC" || saved.paymentToken === "SKR") {
+            setPaymentToken(saved.paymentNetwork === "devnet" ? "USDC" : saved.paymentToken);
+          }
+          if (typeof saved.skrRate === "string") setSkrRate(saved.skrRate);
+          if (saved.paymentResults && typeof saved.paymentResults === "object" && !Array.isArray(saved.paymentResults)) setPaymentResults(saved.paymentResults);
+          if (typeof saved.requestSession === "string") setRequestSession(saved.requestSession);
           if (Array.isArray(saved.people)) setPeople(saved.people);
           if (saved.mode === "equal" || saved.mode === "items") setMode(saved.mode);
           if (saved.assignments && typeof saved.assignments === "object") {
@@ -57,13 +75,14 @@ export function ReceiptReviewScreen() {
     if (!reviewLoaded || route.params?.resetSplit) return;
     AsyncStorage.setItem(
       "snapsplit-review",
-      JSON.stringify({ people, mode, assignments, recipientAddress })
+      JSON.stringify({ people, mode, assignments, recipientAddress, requestSession, paymentResults, paymentNetwork, paymentToken, skrRate })
     ).catch((error) => console.warn("Could not save split", error));
-  }, [people, mode, assignments, recipientAddress, reviewLoaded, route.params?.resetSplit]);
+  }, [people, mode, assignments, recipientAddress, requestSession, paymentResults, paymentNetwork, paymentToken, skrRate, reviewLoaded, route.params?.resetSplit]);
 
   useEffect(() => {
     if (!reviewLoaded || !route.params?.resetSplit) return;
 
+    setRequestSession(new PublicKey(Crypto.getRandomBytes(32)).toBase58());
     setPersonName("");
     setPeople([]);
     setMode("equal");
@@ -129,7 +148,125 @@ export function ReceiptReviewScreen() {
     }, 0);
   }
 
-  function paymentRequestFor(person: string): { url: string; amount: string } | null {
+  function paymentContext(person: string, amount: string): string {
+    return JSON.stringify({
+      requestSession, items, people, mode, assignments,
+      address: recipientAddress.trim(), paymentToken, paymentNetwork, amount, person
+    });
+  }
+
+  function displayedPaymentResult(person: string): PaymentResult | undefined {
+    try {
+      const amount = settlementAmounts(
+        people.map(amountFor), paymentToken, skrRate
+      )[people.indexOf(person)];
+      const result = paymentResults[person];
+      return result?.context === paymentContext(person, amount) ? result : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function claimSignature(
+    signature: string, network: string, context: string
+  ) {
+    const key = "snapsplit-used-payment-" + network + "-" + signature;
+    const previous = await AsyncStorage.getItem(key);
+    if (previous && previous !== context) {
+      throw new Error("This transaction is already assigned to another request on this device.");
+    }
+    await AsyncStorage.setItem(key, context);
+  }
+
+  async function checkSignature(person: string) {
+    if (checkInProgress.current) return;
+    const signature = (signatureInputs[person] ?? "").trim();
+    if (!signature) {
+      Alert.alert("Transaction signature", "Paste the signature from the payer's transaction.");
+      return;
+    }
+    checkInProgress.current = true;
+    setCheckingPerson(person);
+    try {
+      const request = await paymentRequestFor(person);
+      if (!request) return;
+      const valid = await verifyPaymentSignature(signature, {
+        recipient: request.recipient,
+        reference: request.reference,
+        amount: request.amount,
+        token: request.token,
+        network: request.network,
+      });
+      if (!valid) {
+        Alert.alert(
+          "Transfer does not match",
+          "No matching finalized transfer with this recipient, token and exact amount was found."
+        );
+        return;
+      }
+      await claimSignature(signature, request.network, request.context);
+      setPaymentResults(current => ({
+        ...current,
+        [person]: {
+          context: request.context,
+          message: "Transfer verified on-chain by signature; manually assigned to " + person + ".",
+          signature,
+        },
+      }));
+    } catch (error) {
+      Alert.alert(
+        "Signature check unavailable",
+        error instanceof Error ? error.message : "Could not verify the transfer."
+      );
+    } finally {
+      checkInProgress.current = false;
+      setCheckingPerson(null);
+    }
+  }
+
+  async function checkPayment(person: string) {
+    if (checkInProgress.current) return;
+    checkInProgress.current = true;
+    setCheckingPerson(person);
+    try {
+      const request = await paymentRequestFor(person);
+      if (!request) return;
+      const signature = await findPayment({
+        recipient: request.recipient,
+        reference: request.reference,
+        amount: request.amount,
+        token: request.token,
+        network: request.network,
+      });
+      if (signature) {
+        await claimSignature(signature, request.network, request.context);
+      }
+      setPaymentResults(current => ({
+        ...current,
+        [person]: {
+          context: request.context,
+          message: signature
+            ? "Paid - finalized on-chain"
+            : "No matching finalized payment found. If just sent, check again shortly.",
+          ...(signature ? { signature } : {}),
+        },
+      }));
+    } catch (error) {
+      Alert.alert(
+        "Payment check unavailable",
+        error instanceof Error ? error.message : "Could not contact Solana RPC. Try again."
+      );
+    } finally {
+      checkInProgress.current = false;
+      setCheckingPerson(null);
+    }
+  }
+
+  async function paymentRequestFor(person: string): Promise<{
+    url: string; amount: string; reference: string; context: string;
+    recipient: string; token: "USDC" | "SKR"; network: "mainnet" | "devnet";
+  } | null> {
+    if (!reviewLoaded) return null;
     const address = recipientAddress.trim();
     try {
       new PublicKey(address);
@@ -148,15 +285,41 @@ export function ReceiptReviewScreen() {
     let amount: string;
     try {
       amount = settlementAmounts(people.map(amountFor), paymentToken, skrRate)[people.indexOf(person)];
-      const url = requestUri(address, paymentToken, amount, person, paymentNetwork);
-      return { url, amount };
+      const identity = paymentContext(person, amount);
+      const digest = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256, identity
+      );
+      const storageKey = "snapsplit-payment-reference-" + digest;
+      let task = referenceTasks.current.get(storageKey);
+      if (!task) {
+        task = (async () => {
+          const savedReference = await AsyncStorage.getItem(storageKey);
+          if (savedReference) {
+            new PublicKey(savedReference);
+            return savedReference;
+          }
+          const created = new PublicKey(Crypto.getRandomBytes(32)).toBase58();
+          await AsyncStorage.setItem(storageKey, created);
+          return created;
+        })();
+        referenceTasks.current.set(storageKey, task);
+      }
+      let reference: string;
+      try {
+        reference = await task;
+      } catch (error) {
+        referenceTasks.current.delete(storageKey);
+        throw error;
+      }
+      const url = requestUri(address, paymentToken, amount, person, paymentNetwork, reference);
+      return { url, amount, reference, context: identity, recipient: address, token: paymentToken, network: paymentNetwork };
     } catch (error) { Alert.alert("Check settlement rate", error instanceof Error ? error.message : "Invalid settlement."); return null; }
 
 
   }
 
   async function copyPaymentRequest(person: string) {
-    const request = paymentRequestFor(person);
+    const request = await paymentRequestFor(person);
     if (!request) return;
 
     try {
@@ -168,7 +331,7 @@ export function ReceiptReviewScreen() {
   }
 
   async function sharePaymentRequest(person: string) {
-    const request = paymentRequestFor(person);
+    const request = await paymentRequestFor(person);
     if (!request) return;
 
     try {
@@ -181,7 +344,7 @@ export function ReceiptReviewScreen() {
   }
 
   async function openPaymentRequest(person: string) {
-    const request = paymentRequestFor(person);
+    const request = await paymentRequestFor(person);
     if (!request) return;
 
     try {
@@ -357,7 +520,7 @@ export function ReceiptReviewScreen() {
                 />
                 {people.map((person) => (
                   <View key={person} style={{ marginTop: 12 }}>
-                    <Button mode="text" onPress={() => { const r = paymentRequestFor(person); if (r) setPreview(`${person}: ${r.amount} ${paymentToken}\n${r.url}`); }}>Preview amount and link</Button>
+                    <Button mode="text" onPress={async () => { const r = await paymentRequestFor(person); if (r) setPreview(`${person}: ${r.amount} ${paymentToken}\n${r.url}`); }}>Preview amount and link</Button>
                     <Button
                       mode="contained"
                       disabled={amountFor(person) <= 0}
@@ -381,6 +544,47 @@ export function ReceiptReviewScreen() {
                     >
                       Copy request link
                     </Button>
+                    <Button
+                      mode="outlined"
+                      loading={checkingPerson === person}
+                      disabled={!reviewLoaded || checkingPerson !== null || amountFor(person) <= 0}
+                      onPress={() => checkPayment(person)}
+                      style={{ marginTop: 8 }}
+                    >
+                      Check payment
+                    </Button>
+                    <Text style={styles.muted}>
+                      If reference lookup finds nothing, verify a transaction signature.
+                      This checks the transfer; you assign it to {person}.
+                    </Text>
+                    <TextInput
+                      label="Transaction signature"
+                      value={signatureInputs[person] ?? ""}
+                      onChangeText={value => setSignatureInputs(current => ({
+                        ...current, [person]: value
+                      }))}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      multiline
+                      mode="outlined"
+                      style={{ marginTop: 8 }}
+                    />
+                    <Button
+                      mode="outlined"
+                      disabled={!reviewLoaded || checkingPerson !== null || amountFor(person) <= 0}
+                      onPress={() => checkSignature(person)}
+                      style={{ marginTop: 8 }}
+                    >
+                      Verify signature for {person}
+                    </Button>
+                    {displayedPaymentResult(person) && (
+                      <Text selectable style={styles.muted}>
+                        {displayedPaymentResult(person)?.message}
+                        {displayedPaymentResult(person)?.signature
+                          ? "\nTransaction: " + displayedPaymentResult(person)?.signature
+                          : ""}
+                      </Text>
+                    )}
                   </View>
                 ))}
                 {preview && <Text selectable style={styles.muted}>{preview}</Text>}

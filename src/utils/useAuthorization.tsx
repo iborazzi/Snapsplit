@@ -7,16 +7,13 @@ import {
   AuthToken,
   Base64EncodedAddress,
   DeauthorizeAPI,
-  SignInPayloadWithRequiredFields,
   SignInPayload,
 } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import { toUint8Array } from "js-base64";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
+import { useCluster, ClusterNetwork } from "../components/cluster/cluster-data-access";
 
-const CHAIN = "solana";
-const CLUSTER = "devnet";
-const CHAIN_IDENTIFIER = `${CHAIN}:${CLUSTER}`;
 
 export type Account = Readonly<{
   address: Base64EncodedAddress;
@@ -25,6 +22,7 @@ export type Account = Readonly<{
 }>;
 
 type WalletAuthorization = Readonly<{
+  chain?: string;
   accounts: Account[];
   authToken: AuthToken;
   selectedAccount: Account;
@@ -41,6 +39,9 @@ function getAuthorizationFromAuthorizationResult(
   authorizationResult: AuthorizationResult,
   previouslySelectedAccount?: Account
 ): WalletAuthorization {
+  if (!authorizationResult.accounts.length) {
+    throw new Error("Wallet returned no authorized accounts.");
+  }
   let selectedAccount: Account;
   if (
     // We have yet to select an account.
@@ -97,20 +98,33 @@ async function persistAuthorization(
 }
 
 export const APP_IDENTITY = {
-  name: "Solana Mobile Expo Template",
-  uri: "https://fakedomain.com",
+  name: "SnapSplit",
+  uri: "https://github.com/iborazzi/Snapsplit",
 };
 
 export function useAuthorization() {
+  const { selectedCluster } = useCluster();
+  const chainIdentifier = selectedCluster.network === ClusterNetwork.Mainnet
+    ? "solana:mainnet"
+    : selectedCluster.network === ClusterNetwork.Testnet
+      ? "solana:testnet"
+      : "solana:devnet";
   const queryClient = useQueryClient();
   const { data: authorization, isLoading } = useQuery({
-    queryKey: ["wallet-authorization"],
-    queryFn: () => fetchAuthorization(),
+    queryKey: ["wallet-authorization", chainIdentifier],
+    queryFn: async () => {
+      try {
+        const saved = await fetchAuthorization();
+        return saved?.chain === chainIdentifier ? saved : null;
+      } catch {
+        return null;
+      }
+    },
   });
-  const { mutate: setAuthorization } = useMutation({
+  const { mutateAsync: setAuthorization } = useMutation({
     mutationFn: persistAuthorization,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["wallet-authorization"] });
+    onSuccess: (_result, auth) => {
+      queryClient.setQueryData(["wallet-authorization", chainIdentifier], auth);
     },
   });
 
@@ -118,39 +132,42 @@ export function useAuthorization() {
     async (
       authorizationResult: AuthorizationResult
     ): Promise<WalletAuthorization> => {
-      const nextAuthorization = getAuthorizationFromAuthorizationResult(
-        authorizationResult,
-        authorization?.selectedAccount
-      );
+      const nextAuthorization = {
+        ...getAuthorizationFromAuthorizationResult(
+          authorizationResult,
+          authorization?.selectedAccount
+        ),
+        chain: chainIdentifier,
+      };
       await setAuthorization(nextAuthorization);
       return nextAuthorization;
     },
-    [authorization]
+    [authorization, setAuthorization, chainIdentifier]
   );
   const authorizeSession = useCallback(
     async (wallet: AuthorizeAPI) => {
       const authorizationResult = await wallet.authorize({
         identity: APP_IDENTITY,
-        chain: CHAIN_IDENTIFIER,
+        chain: chainIdentifier,
         auth_token: authorization?.authToken,
       });
       return (await handleAuthorizationResult(authorizationResult))
         .selectedAccount;
     },
-    [authorization, handleAuthorizationResult]
+    [authorization, handleAuthorizationResult, chainIdentifier]
   );
   const authorizeSessionWithSignIn = useCallback(
     async (wallet: AuthorizeAPI, signInPayload: SignInPayload) => {
       const authorizationResult = await wallet.authorize({
         identity: APP_IDENTITY,
-        chain: CHAIN_IDENTIFIER,
+        chain: chainIdentifier,
         auth_token: authorization?.authToken,
         sign_in_payload: signInPayload,
       });
       return (await handleAuthorizationResult(authorizationResult))
         .selectedAccount;
     },
-    [authorization, handleAuthorizationResult]
+    [authorization, handleAuthorizationResult, chainIdentifier]
   );
   const deauthorizeSession = useCallback(
     async (wallet: DeauthorizeAPI) => {
@@ -160,7 +177,7 @@ export function useAuthorization() {
       await wallet.deauthorize({ auth_token: authorization.authToken });
       await setAuthorization(null);
     },
-    [authorization]
+    [authorization, setAuthorization]
   );
   return useMemo(
     () => ({
@@ -171,6 +188,6 @@ export function useAuthorization() {
       selectedAccount: authorization?.selectedAccount ?? null,
       isLoading,
     }),
-    [authorization, authorizeSession, deauthorizeSession]
+    [authorization, authorizeSession, authorizeSessionWithSignIn, deauthorizeSession, isLoading]
   );
 }

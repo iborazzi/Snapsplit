@@ -9,7 +9,7 @@ import {
 } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import React from "react";
-import { Appearance, useColorScheme } from "react-native";
+import { useColorScheme } from "react-native";
 import * as Screens from "../screens";
 import { HomeNavigator } from "./HomeNavigator";
 import { StatusBar } from "expo-status-bar";
@@ -33,23 +33,25 @@ import {
  */
 
 type RootStackParamList = {
-  Home: undefined;
+  HomeStack: undefined;
   Settings: undefined;
   // 🔥 Your screens go here
 };
 
 declare global {
   namespace ReactNavigation {
-    interface RootParamList extends RootStackParamList {}
+    interface RootParamList extends RootStackParamList {
+      HomeStack: undefined;
+    }
   }
 }
 
 // Documentation: https://reactnavigation.org/docs/stack-navigator/
-const Stack = createNativeStackNavigator();
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const AppStack = () => {
   return (
-    <Stack.Navigator initialRouteName={"Home"}>
+    <Stack.Navigator initialRouteName={"HomeStack"}>
       <Stack.Screen
         name="HomeStack"
         component={HomeNavigator}
@@ -61,8 +63,7 @@ const AppStack = () => {
   );
 };
 
-export interface NavigationProps
-  extends Partial<React.ComponentProps<typeof NavigationContainer>> {}
+export type NavigationProps = Partial<React.ComponentProps<typeof NavigationContainer>>;
 
 export const AppNavigator = (props: NavigationProps) => {
   const colorScheme = useColorScheme();
