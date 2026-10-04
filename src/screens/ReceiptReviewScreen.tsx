@@ -347,14 +347,35 @@ export function ReceiptReviewScreen() {
     const request = await paymentRequestFor(person);
     if (!request) return;
 
-    try {
-      await Linking.openURL(request.url);
-    } catch {
+    const openWallet = async () => {
+      try {
+        await Linking.openURL(request.url);
+      } catch {
+        Alert.alert(
+          "No compatible wallet",
+          "Install a wallet that supports Solana Pay, or share the request with the payer."
+        );
+      }
+    };
+
+    if (request.token === "SKR") {
       Alert.alert(
-        "No compatible wallet",
-        "Install a wallet that supports Solana Pay, or share the request with the payer."
+        "SKR uses Solana Mainnet",
+        "Turn off Phantom Testnet Mode and make sure the payer wallet is on Solana Mainnet before continuing.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Continue",
+            onPress: () => {
+              void openWallet();
+            },
+          },
+        ]
       );
+      return;
     }
+
+    await openWallet();
   }
   const unassignedCount = mode === "items"
     ? items.filter((_, index) => (assignments[index]?.length ?? 0) === 0).length
@@ -492,7 +513,7 @@ export function ReceiptReviewScreen() {
                   <Chip
                     disabled={paymentNetwork === "devnet"}
                     selected={paymentToken === "SKR"}
-                    onPress={() => setPaymentToken("SKR")}
+                    onPress={() => { setPaymentNetwork("mainnet"); setPaymentToken("SKR"); }}
                   >
                     SKR
                   </Chip>
@@ -629,6 +650,7 @@ const styles = StyleSheet.create({
   },
   button: { borderRadius: 14, marginTop: 20 },
 });
+
 
 
 
