@@ -15,32 +15,34 @@ People often need to:
 - copy wallet addresses
 - coordinate payments across multiple apps
 
-SnapSplit brings the entire process into one mobile flow.
+SnapSplit brings the process into one mobile flow.
 
 ## Solution
 
 With SnapSplit, users can:
 
-- scan a receipt or enter expenses manually
-- review and edit receipt items
+- scan a receipt or import one from the gallery
+- review and edit detected receipt items
+- manually add expenses when needed
 - add participants
 - split the total equally
 - assign individual items to specific people
 - calculate each person's exact share
 - generate USDC or SKR payment requests on Solana
-- share or copy payment links directly from the app
+- share, copy, or open payment requests
+- verify supported Solana payments on-chain
 
-## Demo Flow
+## Mobile Flow
 
-Receipt → Review → Add people → Split → Generate USDC or SKR request
+Receipt → OCR Review → Add People → Split → Payment Request → Wallet → Verification
 
 Example:
 
-- Burger — 12.50 USDC
-- Drink — 3.50 USDC
-- Total — 16.00 USDC
-- Equal split — 8.00 USDC per person
-- Item split — 12.50 USDC / 3.50 USDC
+- Coffee — 3.50 USDC
+- Tea — 2.50 USDC
+- Total — 6.00 USDC
+- Tom — 3.50 USDC
+- Jerry — 2.50 USDC
 
 ## Why Solana
 
@@ -53,128 +55,139 @@ SnapSplit uses USDC on Solana so users can settle shared expenses with a dollar-
 - React Native
 - Expo
 - TypeScript
-- Solana payment URI
-- USDC SPL token
+- Solana Web3
+- Solana Mobile Wallet Adapter
+- Solana Pay-compatible payment URIs
+- SPL tokens
 - AsyncStorage
-- Receipt OCR / image flow
+- `expo-text-extractor`
+- Android native release build
 
-## Payment Requests
+## Receipt OCR Flow
 
-SnapSplit generates Solana payment URIs containing:
+SnapSplit supports receipt-image text extraction through `expo-text-extractor`.
+
+The workflow is:
+
+1. Capture a receipt with the camera or import an image from the gallery.
+2. Extract detected text from the receipt image.
+3. Parse candidate receipt lines into editable item drafts.
+4. Present the detected items to the user for review.
+5. Allow item names and amounts to be corrected before splitting.
+6. Allow manual item entry when extraction is incomplete or unsuitable.
+
+OCR output is therefore not treated as automatically authoritative. The user reviews and confirms receipt data before settlement.
+
+The final demo uses a simple receipt containing:
+
+- Coffee — 3.50
+- Tea — 2.50
+- Total — 6.00
+
+No unsupported OCR accuracy percentage is claimed.
+
+## Bill Splitting
+
+SnapSplit supports two allocation modes:
+
+### Equal split
+
+The receipt total is divided across participants while preserving the rounded total.
+
+### Item-based split
+
+Individual receipt items can be assigned to one or more participants.
+
+The application calculates each participant's share from the selected assignments and identifies unassigned items before settlement.
+
+Core split logic is implemented in:
+
+`src/screens/ReceiptReviewScreen.tsx`
+
+and settlement calculations are implemented in:
+
+`src/domain/settlement.ts`
+
+## Solana Payment Requests
+
+SnapSplit creates Solana Pay-compatible SPL-token payment requests containing:
 
 - recipient wallet
 - requested amount
-- USDC SPL token mint
-- SnapSplit label
+- SPL token mint
+- application label
 - payment message
+- optional unique payment reference
 
-USDC mint:
+### Mainnet USDC mint
 
 `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
 
-## Status
+### Devnet test USDC mint
 
-Hackathon prototype with a working end-to-end mobile flow:
+`4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`
 
-**Receipt → Split → USDC or SKR request**
+Devnet test tokens have no monetary value.
 
-## Author
+## Wallet Integration
 
-Built by iborazzi for the Solana Mobile ecosystem.
+SnapSplit integrates with compatible Solana Android wallets through Solana Mobile Wallet Adapter.
 
-## Verification & Build
+The application can:
 
-### Android release build
+- connect to a compatible wallet
+- create Solana payment requests
+- open requests in an external wallet
+- share payment requests
+- copy payment URIs
 
-    cd android
-    ./gradlew assembleRelease
+Payment approval and transaction signing are performed by the external wallet.
 
-Release APK:
+## On-chain Payment Verification
 
-android/app/build/outputs/apk/release/app-release.apk
+SnapSplit includes on-chain settlement-verification logic.
 
-### Core implementation
+The application supports:
 
-- Receipt capture and manual expense entry: src/screens/HomeScreen.tsx
-- Receipt review, participant assignment and split calculations: src/screens/ReceiptReviewScreen.tsx
-- USDC and SKR Solana payment request generation: src/screens/ReceiptReviewScreen.tsx
+- unique payment references
+- token-aware expected-payment validation
+- recipient validation
+- requested amount validation
+- network-specific mint validation
+- transaction-signature verification
+- reference-aware payment lookup logic
 
-### OCR flow
+During the final hackathon test, a **3.50 Devnet USDC transfer** was successfully verified on-chain using its transaction signature and manually assigned to the participant inside SnapSplit.
 
-SnapSplit supports receipt-image text extraction and converts detected receipt text into editable receipt items.
+The demonstrated transaction-signature verification path is separate from the reference-lookup verification path implemented in the codebase.
 
-The user can review and manually correct parsed items before splitting the bill.
+SnapSplit does not claim that the final recorded demo proves a successful reference-based lookup unless that exact verification state is shown.
 
-### Solana payment requests
+## SKR Integration
 
-SnapSplit validates the recipient as a Solana public key and generates shareable Solana payment URIs.
-
-Supported request tokens:
-
-- USDC
-- SKR
+SnapSplit supports SKR as a settlement-request option on Solana Mainnet.
 
 SKR mint:
 
-SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3
+`SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3`
 
-The SKR integration supports selectable SKR payment requests, share request, open in wallet, and copy Solana payment URI.
+When SKR is selected:
 
-SnapSplit does not claim an automatic USDC-to-SKR exchange-rate conversion.
+- SnapSplit forces the payment network to Solana Mainnet.
+- The participant's USDC-denominated share is converted using a manually agreed SKR-per-USDC rate.
+- The generated payment request contains the SKR SPL-token mint.
+- The application warns the user to use a Mainnet wallet before opening the request.
+- SKR cannot be used in the Devnet USDC demo mode.
+- The payment-verification model remains token-aware.
 
-## Prepared cafe QR and settlement update
+The SKR rate is manually agreed and is **not a live market quote**.
 
-This source revision adds a cafe menu QR modal in `src/components/cafe/CafeMenu.tsx`.
-Only HTTPS links without embedded credentials are accepted; users see the domain before opening the external menu.
-Menu prices are not scraped and orders are not submitted to merchants. Items are entered manually in USDC reference units.
+For transparency, the hackathon build demonstrates SKR Mainnet request generation and settlement configuration. It does **not** claim that a real SKR transfer was completed during the demo.
 
-OCR runs through `expo-text-extractor` in `src/screens/HomeScreen.tsx`; detected lines become editable drafts and must be reviewed before splitting.
-Split allocation is in `src/screens/ReceiptReviewScreen.tsx`. SKR settlement uses an explicitly entered manual SKR-per-USDC rate, with rounding conserved across the group in `src/domain/settlement.ts`.
-Requests include the SPL token mint and an amount in token UI units, not atomic units.
-Copy/share/open creates a transfer request; it does not prove an on-chain payment or implement MWA transfer signing.
+## Android Release
 
-### Checks
+Build command:
 
-```
-npm ci
-npm test
-npm run typecheck
-npm run lint
-```
-
-`expo-camera` is a native dependency, so rebuild the Android APK before demonstrating QR scanning. Real camera/OCR and wallet interoperability require device testing. See `handoff/AKSAM-PLANI.md` for the release evidence workflow.
-
-## Verified Android demo
-
-SnapSplit is an Android receipt-splitting app built with Expo and React Native.
-
-- Scan or select a receipt, review detected items, and edit amounts.
-- Split the bill equally or assign individual items to people.
-- Connect a compatible Android wallet through Mobile Wallet Adapter.
-- Generate and share Solana Pay transfer requests for USDC or SKR.
-- SKR amounts use a manually agreed rate, not a live market quote.
-- Devnet demo mode supports Circle test USDC only.
-
-### Recorded demo
-
-The demo shows a 6.00 USDC receipt, Tom and Jerry, item-based shares
-of 3.50 and 2.50 USDC, and SKR request controls with an example agreed rate.
-
-A 3.50 test USDC request for Tom is opened from SnapSplit in Phantom.
-The recording shows wallet approval, a "Sent" notification, and the
-sender's test USDC balance decreasing from 11.50 to 8.00.
-
-Devnet tokens have no monetary value. The SKR section demonstrates
-request configuration; it does not demonstrate an SKR transfer.
-
-### Current limitations
-
-Payments are approved and sent in the external wallet.
-SnapSplit does not yet verify payment completion on-chain.
-The recorded receipt is denominated in USDC; automatic fiat conversion
-is not implemented.
-
-### Validation
-
-Run `npm test`, `npm run typecheck`, and `npm run lint`.
-The current lint baseline contains 20 warnings and no errors.
+```bash
+cd android
+./gradlew assembleRelease
