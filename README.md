@@ -191,3 +191,70 @@ Build command:
 ```bash
 cd android
 ./gradlew assembleRelease
+```
+
+### Windows Android Release
+
+From the project directory:
+
+    cd android
+    .\gradlew.bat assembleRelease
+
+APK output:
+
+    android/app/build/outputs/apk/release/app-release.apk
+
+Official download:
+https://github.com/iborazzi/Snapsplit/releases/download/v1.0.0-clockin/SnapSplit-Android-FINAL.apk
+
+## Development Setup
+
+Requirements:
+- Node.js and npm
+- Java 17
+- Android Studio with Android SDK
+- Android emulator or Android phone
+- Compatible Solana wallet for wallet features
+
+Clone and install:
+
+    git clone https://github.com/iborazzi/Snapsplit.git
+    cd Snapsplit
+    npm ci
+
+Start an Android emulator using Android Studio, then run:
+
+    npm run android
+
+Start Metro when needed:
+
+    npm start
+
+## Validation
+
+    npm run typecheck
+    npm test
+    npm run lint
+
+Final validation: TypeScript passed and 22 automated tests passed.
+
+## Physical Android Device
+
+The standalone Release APK was installed and launched on a Huawei Mate 10 Pro running EMUI 12.
+
+The emulator demonstrated a finalized Devnet test USDC payment. Phantom Devnet approval was not successfully completed on the Huawei device.
+
+## Demo Limitations
+
+- Devnet USDC has no monetary value.
+- SKR requests require Solana Mainnet.
+- SKR conversions use a manually agreed rate, not a live market quote.
+- No completed on-chain SKR transfer is claimed.
+- The demonstrated Devnet USDC verification uses the transaction signature.
+- Wallet behavior can differ between Android devices and wallet versions.
+
+## Security Notes
+
+The repository uses dependency overrides and compatibility patches. Passing automated tests does not constitute an independent security audit.
+
+Never share wallet seed phrases or private keys.
