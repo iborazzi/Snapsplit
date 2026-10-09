@@ -1,4 +1,4 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+﻿import AsyncStorage from "@react-native-async-storage/async-storage";
 import { PublicKey, PublicKeyInitData } from "@solana/web3.js";
 import {
   Account as AuthorizedAccount,
@@ -146,11 +146,27 @@ export function useAuthorization() {
   );
   const authorizeSession = useCallback(
     async (wallet: AuthorizeAPI) => {
-      const authorizationResult = await wallet.authorize({
-        identity: APP_IDENTITY,
-        chain: chainIdentifier,
-        auth_token: authorization?.authToken,
-      });
+      let authorizationResult: AuthorizationResult;
+
+      try {
+        authorizationResult = await wallet.authorize({
+          identity: APP_IDENTITY,
+          chain: chainIdentifier,
+          auth_token: authorization?.authToken,
+        });
+      } catch (error) {
+        if (!authorization?.authToken) {
+          throw error;
+        }
+
+        // Stored authorization may have expired or been revoked.
+        // Request fresh consent once, without the old token.
+        authorizationResult = await wallet.authorize({
+          identity: APP_IDENTITY,
+          chain: chainIdentifier,
+        });
+      }
+
       return (await handleAuthorizationResult(authorizationResult))
         .selectedAccount;
     },

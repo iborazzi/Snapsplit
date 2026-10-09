@@ -1,6 +1,8 @@
 import { transact } from "@solana-mobile/mobile-wallet-adapter-protocol-web3js";
 import { Account, useAuthorization } from "./useAuthorization";
 import {
+  PublicKey,
+  Connection,
   Transaction,
   TransactionSignature,
   VersionedTransaction,
@@ -50,6 +52,68 @@ export function useMobileWallet() {
     [authorizeSession]
   );
 
+  const signOnlyForAccount = useCallback(
+    async (
+      transaction: Transaction,
+      expectedOwner: PublicKey,
+      connection: Connection
+    ): Promise<{
+      signed: Transaction;
+      latestBlockhash: { blockhash: string; lastValidBlockHeight: number };
+    }> => {
+      return await transact(async (wallet) => {
+        const authorized = await authorizeSession(wallet);
+
+        if (!authorized.publicKey.equals(expectedOwner)) {
+          throw new Error("Wallet account changed. Signing cancelled.");
+        }
+
+        // Request a fresh blockhash after the permission handshake, not before it.
+        const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+        transaction.recentBlockhash = latestBlockhash.blockhash;
+
+        const signedTransactions = await wallet.signTransactions({
+          transactions: [transaction],
+        });
+
+        const signed = signedTransactions[0];
+
+        if (!signed || !signed.verifySignatures()) {
+          throw new Error("Wallet did not return a valid signed transaction.");
+        }
+
+        return { signed, latestBlockhash };
+      });
+    },
+    [authorizeSession]
+  );
+  const signAndSendForAccount = useCallback(
+    async (
+      transaction: Transaction | VersionedTransaction,
+      minContextSlot: number,
+      expectedOwner: PublicKey
+    ): Promise<TransactionSignature> => {
+      return await transact(async (wallet) => {
+        const authorized = await authorizeSession(wallet);
+
+        if (!authorized.publicKey.equals(expectedOwner)) {
+          throw new Error("Phantom account changed. Payment cancelled.");
+        }
+
+        const signatures = await wallet.signAndSendTransactions({
+          transactions: [transaction],
+          minContextSlot,
+        });
+
+        if (!signatures[0]) {
+          throw new Error("Phantom did not return a transaction signature.");
+        }
+
+        return signatures[0];
+      });
+    },
+    [authorizeSession]
+  );
   const signMessage = useCallback(
     async (message: Uint8Array): Promise<Uint8Array> => {
       return await transact(async (wallet) => {
@@ -70,8 +134,10 @@ export function useMobileWallet() {
       signIn,
       disconnect,
       signAndSendTransaction,
+      signAndSendForAccount,
+      signOnlyForAccount,
       signMessage,
     }),
-    [connect, signIn, disconnect, signAndSendTransaction, signMessage]
+    [connect, signIn, disconnect, signAndSendTransaction, signAndSendForAccount, signOnlyForAccount, signMessage]
   );
 }

@@ -1,10 +1,15 @@
 import { requestUri, settlementAmounts } from "../domain/settlement";
+import { prepareDevnetPayment } from "../domain/prepare-devnet-payment";
+import { encodeBase58 } from "../domain/base58";
+import { useMobileWallet } from "../utils/useMobileWallet";
+import { useAuthorization } from "../utils/useAuthorization";
+import { useCluster, ClusterNetwork } from "../components/cluster/cluster-data-access";
 import { findPayment, verifyPaymentSignature } from "../domain/payment-verification";
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, Linking, ScrollView, Share, StatusBar, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Crypto from "expo-crypto";
-import { PublicKey } from "@solana/web3.js";
+import { PublicKey, LAMPORTS_PER_SOL, Transaction, ComputeBudgetInstruction, ComputeBudgetProgram } from "@solana/web3.js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Button, Chip, Surface, Text, TextInput } from "react-native-paper";
 import { useNavigation, useRoute } from "@react-navigation/native";
@@ -14,6 +19,11 @@ type SplitMode = "equal" | "items";
 type PaymentResult = { context: string; message: string; signature?: string };
 
 export function ReceiptReviewScreen() {
+  const mobileWallet = useMobileWallet();
+  const { selectedAccount } = useAuthorization();
+  const { selectedCluster } = useCluster();
+  const [sendingDevnet, setSendingDevnet] = useState<string | null>(null);
+  const devnetPaymentLock = useRef(false);
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const [savedItems, setSavedItems] = useState<ReceiptItem[]>([]);
@@ -318,6 +328,471 @@ export function ReceiptReviewScreen() {
 
   }
 
+  async function payWithPhantom(person: string) {
+    if (devnetPaymentLock.current) return;
+
+    if (
+      paymentNetwork !== "devnet" ||
+      paymentToken !== "USDC" ||
+      selectedCluster.network !== ClusterNetwork.Devnet
+    ) {
+      Alert.alert("Network mismatch", "Devnet demo and Devnet wallet network are required.");
+      return;
+    }
+
+    devnetPaymentLock.current = true;
+    setSendingDevnet(person);
+
+    let handedToConfirmation = false;
+
+    try {
+      const request = await paymentRequestFor(person);
+
+      if (!request || request.network !== "devnet" || request.token !== "USDC") {
+        return;
+      }
+
+      const owner = selectedAccount?.publicKey;
+
+      if (!owner) {
+        throw new Error(
+          "Connect Phantom from the Home screen first, then return to Split."
+        );
+      }
+      const recipient = new PublicKey(request.recipient);
+      const reference = new PublicKey(request.reference);
+
+      const prepared = await prepareDevnetPayment({
+        owner,
+        recipient,
+        reference,
+        amount: request.amount,
+      });
+
+      const message = prepared.transaction.compileMessage();
+
+      const feeResult = await prepared.connection.getFeeForMessage(
+        message,
+        "confirmed"
+      );
+
+      if (feeResult.value === null) {
+        throw new Error("Could not estimate Devnet transaction fee.");
+      }
+
+      const createsAta = prepared.transaction.instructions.length > 1;
+
+      const ataRent = createsAta
+        ? await prepared.connection.getMinimumBalanceForRentExemption(165)
+        : 0;
+
+      const totalSolCost = ataRent + feeResult.value;
+      const solBalance = await prepared.connection.getBalance(owner);
+
+      if (solBalance < totalSolCost) {
+        throw new Error("Insufficient Devnet SOL for transaction fees and account rent.");
+      }
+
+      handedToConfirmation = true;
+
+      Alert.alert(
+        "Review Devnet test payment",
+        `Send: ${request.amount} test USDC\n` +
+        `Recipient: ${recipient.toBase58()}\n\n` +
+        `ATA rent: ${(ataRent / LAMPORTS_PER_SOL).toFixed(9)} Devnet SOL\n` +
+        `Network fee: ${(feeResult.value / LAMPORTS_PER_SOL).toFixed(9)} Devnet SOL\n` +
+        `Total SOL cost: ${(totalSolCost / LAMPORTS_PER_SOL).toFixed(9)}\n\n` +
+        `Devnet test tokens have no monetary value.`,
+        [
+          {
+            text: "Cancel",
+            style: "cancel",
+            onPress: () => {
+              devnetPaymentLock.current = false;
+              setSendingDevnet(null);
+            },
+          },
+          {
+            text: "Continue to Phantom",
+            onPress: async () => {
+              try {
+                const pendingKey =
+                  "snapsplit-pending-devnet-" + request.reference;
+
+                const existingPending =
+                  await AsyncStorage.getItem(pendingKey);
+
+                if (existingPending) {
+                  // An old signed transaction must NOT be blindly retried or erased.
+                  const previous: unknown = JSON.parse(existingPending);
+                  if (
+                    !previous || typeof previous !== "object" ||
+                    !("status" in previous) || previous.status !== "signed" ||
+                    !("signedTransaction" in previous) ||
+                    typeof previous.signedTransaction !== "string" ||
+                    !("reference" in previous) || previous.reference !== request.reference ||
+                    !("recipient" in previous) || previous.recipient !== request.recipient ||
+                    !("amount" in previous) || previous.amount !== request.amount
+                  ) {
+                    throw new Error(
+                      "An earlier payment requires manual review. Do not pay again yet."
+                    );
+                  }
+
+                  const oldTransaction = Transaction.from(
+                    Buffer.from(previous.signedTransaction, "base64")
+                  );
+                  if (!oldTransaction.verifySignatures() ||
+                      !oldTransaction.signature || !oldTransaction.recentBlockhash) {
+                    throw new Error("Stored transaction could not be verified. Payment blocked.");
+                  }
+                  const oldSignature = encodeBase58(oldTransaction.signature);
+                  const oldStatus = await prepared.connection.getSignatureStatuses(
+                    [oldSignature], { searchTransactionHistory: true }
+                  );
+                  if (oldStatus.value[0]) {
+                    throw new Error(
+                      "Earlier transaction exists on Devnet (" + oldSignature +
+                      "). Review it before making another payment."
+                    );
+                  }
+                  const matchingPayment = await findPayment({
+                    recipient: request.recipient,
+                    reference: request.reference,
+                    amount: request.amount,
+                    token: request.token,
+                    network: request.network,
+                  });
+                  if (matchingPayment) {
+                    throw new Error(
+                      "This payment was already completed on-chain: " + matchingPayment
+                    );
+                  }
+                  const stillValid = await prepared.connection.isBlockhashValid(
+                    oldTransaction.recentBlockhash, { commitment: "confirmed" }
+                  );
+                  if (stillValid.value) {
+                    throw new Error(
+                      "Previous signed transaction is still valid. Wait and check again."
+                    );
+                  }
+
+                  // Only after chain checks AND blockhash expiry: retain evidence,
+                  // then let the user explicitly initiate a new approval next time.
+                  const archiveKey = "snapsplit-expired-devnet-" +
+                    request.reference + "-" + oldSignature;
+                  await AsyncStorage.setItem(archiveKey, JSON.stringify({
+                    ...previous,
+                    status: "expired",
+                    signature: oldSignature,
+                    archivedAt: Date.now(),
+                  }));
+                  await AsyncStorage.removeItem(pendingKey);
+                  Alert.alert(
+                    "Expired request archived",
+                    "No matching payment was found, and the old blockhash has expired. " +
+                    "The old signed transaction was preserved for audit. " +
+                    "Tap Pay with Phantom again to create a NEW signed transaction."
+                  );
+                  return;
+                }
+
+                // Fetch the blockhash INSIDE the MWA session, AFTER wallet consent.
+                const { signed, latestBlockhash: freshBlockhash } =
+                  await mobileWallet.signOnlyForAccount(
+                    prepared.transaction,
+                    owner,
+                    prepared.connection
+                  );
+
+                // Permit only bounded compute-budget instructions
+                // prepended by the wallet.
+                const budgetProgram = ComputeBudgetProgram.programId;
+
+                const budgetInstructions = signed.instructions.filter(
+                  (ix) => ix.programId.equals(budgetProgram)
+                );
+
+                if (
+                  budgetInstructions.length > 2 ||
+                  !signed.instructions
+                    .slice(0, budgetInstructions.length)
+                    .every((ix) => ix.programId.equals(budgetProgram))
+                ) {
+                  throw new Error("Unexpected wallet instructions.");
+                }
+
+                let computeLimit = 200000;
+                let computePrice = 0n;
+                let hasLimit = false;
+                let hasPrice = false;
+
+                for (const ix of budgetInstructions) {
+                  if (ix.keys.length !== 0) {
+                    throw new Error("Invalid fee instruction accounts.");
+                  }
+
+                  const type =
+                    ComputeBudgetInstruction.decodeInstructionType(ix);
+
+                  if (type === "SetComputeUnitLimit" && !hasLimit) {
+                    computeLimit =
+                      ComputeBudgetInstruction.decodeSetComputeUnitLimit(ix).units;
+                    hasLimit = true;
+                  } else if (type === "SetComputeUnitPrice" && !hasPrice) {
+                    computePrice = BigInt(
+                      ComputeBudgetInstruction.decodeSetComputeUnitPrice(ix)
+                        .microLamports
+                    );
+                    hasPrice = true;
+                  } else {
+                    throw new Error("Unsupported wallet fee instruction.");
+                  }
+                }
+
+                const priorityFee =
+                  (BigInt(computeLimit) * computePrice + 999999n) /
+                  1000000n;
+
+                if (
+                  !Number.isInteger(computeLimit) ||
+                  computeLimit < 1 ||
+                  computeLimit > 400000 ||
+                  priorityFee > 100000n
+                ) {
+                  throw new Error("Wallet priority fee exceeds limit.");
+                }
+
+                const original = prepared.transaction.instructions;
+                const actual = signed.instructions.slice(
+                  budgetInstructions.length
+                );
+
+                const samePayment =
+                  signed.feePayer?.equals(owner) === true &&
+                  prepared.transaction.feePayer?.equals(owner) === true &&
+                  signed.recentBlockhash ===
+                    prepared.transaction.recentBlockhash &&
+                  signed.signatures.length === 1 &&
+                  signed.signatures[0].publicKey.equals(owner) &&
+                  actual.length === original.length &&
+                  actual.every((ix, i) => {
+                    const expected = original[i];
+                    return (
+                      ix.programId.equals(expected.programId) &&
+                      ix.data.equals(expected.data) &&
+                      ix.keys.length === expected.keys.length &&
+                      ix.keys.every((key, j) => {
+                        const wanted = expected.keys[j];
+                        return (
+                          key.pubkey.equals(wanted.pubkey) &&
+                          key.isSigner === wanted.isSigner &&
+                          (
+                            key.isWritable === wanted.isWritable ||
+                            (
+                              key.pubkey.equals(owner) &&
+                              wanted.isWritable === false &&
+                              key.isWritable === true
+                            )
+                          )
+                        );
+                      })
+                    );
+                  });
+
+                if (!samePayment) {
+                  const differences: string[] = [];
+
+                  if (signed.feePayer?.equals(owner) !== true) {
+                    differences.push("signed-payer");
+                  }
+
+                  if (prepared.transaction.feePayer?.equals(owner) !== true) {
+                    differences.push("original-payer");
+                  }
+
+                  if (
+                    signed.recentBlockhash !==
+                    prepared.transaction.recentBlockhash
+                  ) {
+                    differences.push("blockhash");
+                  }
+
+                  if (
+                    signed.signatures.length !== 1 ||
+                    signed.signatures[0]?.publicKey.equals(owner) !== true
+                  ) {
+                    differences.push("signers");
+                  }
+
+                  if (actual.length !== original.length) {
+                    differences.push(
+                      "instruction-count:" +
+                      actual.length + "/" + original.length
+                    );
+                  } else {
+                    actual.forEach((ix, i) => {
+                      const expected = original[i];
+
+                      if (!ix.programId.equals(expected.programId)) {
+                        differences.push("program-" + i);
+                      }
+
+                      if (!ix.data.equals(expected.data)) {
+                        differences.push("data-" + i);
+                      }
+
+                      if (
+                        ix.keys.length !== expected.keys.length ||
+                        !ix.keys.every((key, j) => {
+                          const wanted = expected.keys[j];
+                          return (
+                            key.pubkey.equals(wanted.pubkey) &&
+                            key.isSigner === wanted.isSigner &&
+                            (
+                            key.isWritable === wanted.isWritable ||
+                            (
+                              key.pubkey.equals(owner) &&
+                              wanted.isWritable === false &&
+                              key.isWritable === true
+                            )
+                          )
+                          );
+                        })
+                      ) {
+                        differences.push("accounts-" + i);
+                      }
+                    });
+                  }
+
+                  throw new Error(
+                    "Payment safely blocked. Differences: " +
+                    (differences.join(", ") || "unknown") +
+                    ". Budget instructions: " +
+                    budgetInstructions.length
+                  );
+                }
+
+                if (!signed.verifySignatures()) {
+                  throw new Error("Invalid wallet signature.");
+                }
+
+                // Never broadcast or persist a signature that has already expired.
+                if (!signed.recentBlockhash ||
+                    !(await prepared.connection.isBlockhashValid(
+                      signed.recentBlockhash, { commitment: "confirmed" }
+                    )).value) {
+                  throw new Error(
+                    "Phantom approval took too long: blockhash expired. " +
+                    "Nothing was broadcast. Please approve the next attempt promptly."
+                  );
+                }
+
+                const rawTransaction = signed.serialize();
+
+                // Persist before broadcasting so a timeout cannot
+                // silently create a new payment attempt.
+                await AsyncStorage.setItem(
+                  pendingKey,
+                  JSON.stringify({
+                    reference: request.reference,
+                    recipient: request.recipient,
+                    amount: request.amount,
+                    createdAt: Date.now(),
+                    signedTransaction: rawTransaction.toString("base64"),
+                    status: "signed",
+                  })
+                );
+
+                const signature =
+                  await prepared.connection.sendRawTransaction(
+                    rawTransaction,
+                    {
+                      skipPreflight: false,
+                      preflightCommitment: "confirmed",
+                      minContextSlot: prepared.minContextSlot,
+                      maxRetries: 3,
+                    }
+                  );
+
+                await AsyncStorage.setItem(
+                  pendingKey,
+                  JSON.stringify({
+                    reference: request.reference,
+                    recipient: request.recipient,
+                    amount: request.amount,
+                    createdAt: Date.now(),
+                    signature,
+                    status: "submitted",
+                  })
+                );
+
+                const latestBlockhash = freshBlockhash;
+
+                const confirmation = await prepared.connection.confirmTransaction(
+                  { signature, ...latestBlockhash },
+                  "confirmed"
+                );
+
+                if (confirmation.value.err) {
+                  throw new Error("Devnet transaction failed.");
+                }
+
+                const verified = await verifyPaymentSignature(signature, {
+                  recipient: request.recipient,
+                  reference: request.reference,
+                  amount: request.amount,
+                  token: request.token,
+                  network: request.network,
+                });
+
+                if (!verified) {
+                  throw new Error("Transaction submitted, but payment verification is incomplete.");
+                }
+
+                await AsyncStorage.setItem(
+                  pendingKey,
+                  JSON.stringify({
+                    reference: request.reference,
+                    recipient: request.recipient,
+                    amount: request.amount,
+                    signature,
+                    status: "verified",
+                    verifiedAt: Date.now(),
+                  })
+                );
+                Alert.alert(
+                  "Payment verified",
+                  `Devnet test USDC payment confirmed.\n${signature}`
+                );
+              } catch (error) {
+                Alert.alert(
+                  "Payment not verified",
+                  error instanceof Error ? error.message : "Unknown payment error."
+                );
+              } finally {
+                devnetPaymentLock.current = false;
+                setSendingDevnet(null);
+              }
+            },
+          },
+        ],
+        {
+          cancelable: false,
+        }
+      );
+    } catch (error) {
+      Alert.alert(
+        "Could not prepare payment",
+        error instanceof Error ? error.message : "Payment preparation failed."
+      );
+    } finally {
+      if (!handedToConfirmation) {
+        devnetPaymentLock.current = false;
+        setSendingDevnet(null);
+      }
+    }
+  }
   async function copyPaymentRequest(person: string) {
     const request = await paymentRequestFor(person);
     if (!request) return;
@@ -557,6 +1032,18 @@ export function ReceiptReviewScreen() {
                     >
                       Open in wallet
                     </Button>
+                    {paymentNetwork === "devnet" && paymentToken === "USDC" && (
+                      <Button
+                        mode="contained"
+                        buttonColor="#512DA8"
+                        disabled={amountFor(person) <= 0 || sendingDevnet !== null}
+                        loading={sendingDevnet === person}
+                        onPress={() => void payWithPhantom(person)}
+                        style={{ marginTop: 8 }}
+                      >
+                        Pay with Phantom - Devnet USDC
+                      </Button>
+                    )}
                     <Button
                       mode="text"
                       disabled={amountFor(person) <= 0}
@@ -650,7 +1137,3 @@ const styles = StyleSheet.create({
   },
   button: { borderRadius: 14, marginTop: 20 },
 });
-
-
-
-
